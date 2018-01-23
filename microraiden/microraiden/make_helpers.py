@@ -1,3 +1,4 @@
+"""Helper functions to make initialization of the components simpler"""
 import sys
 import logging
 
@@ -10,7 +11,8 @@ from microraiden.exceptions import (
     StateReceiverAddrMismatch,
     StateContractAddrMismatch
 )
-from microraiden import config
+from microraiden import constants
+from microraiden.config import NETWORK_CFG
 from microraiden.proxy.paywalled_proxy import PaywalledProxy
 
 log = logging.getLogger(__name__)
@@ -18,7 +20,7 @@ log = logging.getLogger(__name__)
 
 def make_channel_manager_contract(web3: Web3, channel_manager_address: str) -> Contract:
     return web3.eth.contract(
-        abi=config.CONTRACT_METADATA[config.CHANNEL_MANAGER_ABI_NAME]['abi'],
+        abi=constants.CONTRACT_METADATA[constants.CHANNEL_MANAGER_ABI_NAME]['abi'],
         address=channel_manager_address
     )
 
@@ -32,7 +34,7 @@ def make_channel_manager(
     channel_manager_address = to_checksum_address(channel_manager_address)
     channel_manager_contract = make_channel_manager_contract(web3, channel_manager_address)
     token_address = channel_manager_contract.call().token()
-    token_abi = config.CONTRACT_METADATA[config.TOKEN_ABI_NAME]['abi']
+    token_abi = constants.CONTRACT_METADATA[constants.TOKEN_ABI_NAME]['abi']
     token_contract = web3.eth.contract(abi=token_abi, address=token_address)
     try:
         return ChannelManager(
@@ -67,8 +69,8 @@ def make_paywalled_proxy(
         web3=None
 ) -> PaywalledProxy:
     if web3 is None:
-        web3 = Web3(HTTPProvider(config.WEB3_PROVIDER_DEFAULT, request_kwargs={'timeout': 60}))
-        contract_address = contract_address or config.CHANNEL_MANAGER_ADDRESS[web3.version.network]
+        web3 = Web3(HTTPProvider(constants.WEB3_PROVIDER_DEFAULT, request_kwargs={'timeout': 60}))
+        contract_address = contract_address or NETWORK_CFG.CHANNEL_MANAGER_ADDRESS
     channel_manager = make_channel_manager(private_key, contract_address, state_filename, web3)
-    proxy = PaywalledProxy(channel_manager, flask_app, config.HTML_DIR, config.JSLIB_DIR)
+    proxy = PaywalledProxy(channel_manager, flask_app, constants.HTML_DIR, constants.JSLIB_DIR)
     return proxy

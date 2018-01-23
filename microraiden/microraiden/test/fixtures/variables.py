@@ -5,7 +5,11 @@ from ethereum.tester import keys
 import os
 import json
 from microraiden.utils import privkey_to_addr
-from microraiden.config import CONTRACTS_ABI_JSON, CHANNEL_MANAGER_ABI_NAME, TOKEN_ABI_NAME
+from microraiden.constants import (
+    CONTRACTS_ABI_JSON,
+    CHANNEL_MANAGER_ABI_NAME,
+    TOKEN_ABI_NAME,
+)
 
 
 @pytest.fixture

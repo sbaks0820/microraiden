@@ -9,7 +9,8 @@ from web3.contract import Contract
 from web3.exceptions import BadFunctionCallOutput
 from eth_utils import is_same_address, to_checksum_address
 
-import microraiden.config as config
+from microraiden.config import NETWORK_CFG
+from microraiden.constants import PROXY_BALANCE_LIMIT
 from microraiden.utils import get_logs
 
 
@@ -41,7 +42,7 @@ class Blockchain(gevent.Greenlet):
         #  - used to dispute/close channels that are in CHALLENGED state after manager
         #     has ether to spend again
         self.insufficient_balance = False
-        self.sync_start_block = config.START_SYNC_BLOCK[self.web3.version.network]
+        self.sync_start_block = NETWORK_CFG.start_sync_block
 
     def _run(self):
         self.running = True
@@ -68,6 +69,7 @@ class Blockchain(gevent.Greenlet):
         self.running = False
 
     def wait_sync(self):
+        """Block until event polling is up-to-date with a most recent block of the blockchain"""
         self.wait_sync_event.wait()
 
     def _update(self):
@@ -289,8 +291,10 @@ class Blockchain(gevent.Greenlet):
             self.wait_sync_event.set()
 
     def insufficient_balance_recover(self):
+        """Recover from an insufficient balance state by closing
+        all pending channels if possible."""
         balance = self.web3.eth.getBalance(self.cm.receiver)
-        if balance < config.PROXY_BALANCE_LIMIT:
+        if balance < PROXY_BALANCE_LIMIT:
             return
         try:
             self.cm.close_pending_channels()

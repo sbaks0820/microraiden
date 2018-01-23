@@ -5,12 +5,14 @@ import requests
 import logging
 from flask import Response, stream_with_context, request
 
-from microraiden.config import MICRORAIDEN_DIR
+from microraiden.constants import MICRORAIDEN_DIR
 
 log = logging.getLogger(__name__)
 
 
 class PaywalledProxyUrl(Expensive):
+    """Proxified paywall - if payment is sucessful,
+    it fetches a content from a remote server"""
     def __init__(self, domain=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.paywall_html = self.extract_paywall_body(
@@ -35,6 +37,8 @@ class PaywalledProxyUrl(Expensive):
 
     def get_paywall(self, url: str):
         data = self.get(url)
+        if data.headers['Content-Type'] != 'text/html':
+            return super().get_paywall(url)
 
 #  <link rel="stylesheet" type="text/css" href="/js/styles.css">
 
