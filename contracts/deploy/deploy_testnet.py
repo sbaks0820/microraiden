@@ -12,6 +12,11 @@ from utils.utils import (
     wait,
 )
 
+from web3 import Web3,HTTPProvider
+from web3.middleware.pythonic import (
+    pythonic_middleware,
+    to_hexbytes,
+)
 
 @click.command()
 @click.option(
@@ -68,8 +73,10 @@ def main(**kwargs):
 
     assert challenge_period >= 500, 'Challenge period should be >= 500 blocks'
 
-    if chain_name == 'rinkeby':
-        txn_wait = 500
+# PART OF TEMP FIX TO ISSUE 414 IN PULL REQUEST: https://github.com/raiden-network/microraiden/pull/416
+#    if chain_name == 'rinkeby':
+#        txn_wait = 500
+# end
 
     print('''Make sure {} chain is running, you can connect to it and it is synced,
           or you'll get timeout'''.format(chain_name))
@@ -77,6 +84,15 @@ def main(**kwargs):
     with project.get_chain(chain_name) as chain:
         web3 = chain.web3
         print('Web3 provider is', web3.providers[0])
+
+        # Temporary fix for Rinkeby; PoA adds bytes to extraData, which is not yellow-paper-compliant
+        # https://github.com/ethereum/web3.py/issues/549
+        if int(web3.version.network) == 4:
+            txn_wait = 500
+             size_extraData_for_poa = 200
+             pythonic_middleware.__closure__[2].cell_contents['eth_getBlockByNumber'].args[1].args[0]['extraData'] = to_hexbytes(size_extraData_for_poa, variable_length=True)
+             pythonic_middleware.__closure__[2].cell_contents['eth_getBlockByHash'].args[1].args[0]['extraData'] = to_hexbytes(size_extraData_for_poa, variable_length=True)
+        # end
 
         owner = owner or web3.eth.accounts[0]
         assert owner and is_address(owner), 'Invalid owner provided.'

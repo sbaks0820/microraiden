@@ -44,6 +44,12 @@ class Blockchain(gevent.Greenlet):
         self.insufficient_balance = False
         self.sync_start_block = NETWORK_CFG.start_sync_block
 
+
+    ''' 
+        This is the main function that tries to call _update every time it is called. 
+        It first asserts is there is sufficient balance for manager and fails is there
+        isn't.
+    '''
     def _run(self):
         self.running = True
         self.log.info('starting blockchain polling (interval %ss)', self.poll_interval)
@@ -71,6 +77,7 @@ class Blockchain(gevent.Greenlet):
     def wait_sync(self):
         """Block until event polling is up-to-date with a most recent block of the blockchain"""
         self.wait_sync_event.wait()
+
 
     def _update(self):
         current_block = self.web3.eth.blockNumber
