@@ -211,12 +211,12 @@
       },
       "web3": {
         "eth": {
-            "default_account": "0xd96b724286c592758de7cbd72c086a8a8605417f"
+            "default_account": "0xe5e3a76c406321e15039dadccb1224e49776592d"
         },
         "provider": {
           "class": "web3.providers.rpc.HTTPProvider",
             "settings": {
-            "endpoint_uri": "http://127.0.0.1:8545",
+            "endpoint_uri": "http://172.19.0.17:8745",
             "request_kwargs": {
                 "timeout": 180
             }

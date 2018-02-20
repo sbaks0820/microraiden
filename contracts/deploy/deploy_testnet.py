@@ -89,9 +89,9 @@ def main(**kwargs):
         # https://github.com/ethereum/web3.py/issues/549
         if int(web3.version.network) == 4:
             txn_wait = 500
-             size_extraData_for_poa = 200
-             pythonic_middleware.__closure__[2].cell_contents['eth_getBlockByNumber'].args[1].args[0]['extraData'] = to_hexbytes(size_extraData_for_poa, variable_length=True)
-             pythonic_middleware.__closure__[2].cell_contents['eth_getBlockByHash'].args[1].args[0]['extraData'] = to_hexbytes(size_extraData_for_poa, variable_length=True)
+            size_extraData_for_poa = 200
+            pythonic_middleware.__closure__[2].cell_contents['eth_getBlockByNumber'].args[1].args[0]['extraData'] = to_hexbytes(size_extraData_for_poa, variable_length=True)
+            pythonic_middleware.__closure__[2].cell_contents['eth_getBlockByHash'].args[1].args[0]['extraData'] = to_hexbytes(size_extraData_for_poa, variable_length=True)
         # end
 
         owner = owner or web3.eth.accounts[0]
@@ -103,6 +103,7 @@ def main(**kwargs):
         token = chain.provider.get_contract_factory('CustomToken')
 
         if not token_address:
+            print("Trying to deploy token.")
             txhash = token.deploy(
                 args=[supply, token_name, token_symbol, token_decimals],
                 transaction={'from': owner}

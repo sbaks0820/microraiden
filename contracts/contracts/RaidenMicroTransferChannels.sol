@@ -19,6 +19,12 @@ contract RaidenMicroTransferChannels {
     // and delete the channel.
     uint32 public challenge_period;
 
+    // Nummber of blocks ot wait from an uncooperativeClose initiated by the sender
+    // in order to give the monitor a chance to submit proof of the latest state 
+    // in case the sender cheats. After the monitor period, any party can challenge
+    // the monitor or reveal the pre-image of the state hash.
+    uint32 public monitor_period;
+
     // Contract semantic version
     string public constant version = '0.2.0';
 
@@ -46,6 +52,12 @@ contract RaidenMicroTransferChannels {
         // Supports creation of multiple channels between the 2 parties and prevents
         // replay of messages in later channels.
         uint32 open_block_number;
+
+        // // Counter which specifies which iteration the state of the channel
+        // // is currently at. Any change in the balance in the state triggers
+        // // this counter to increment.
+        // uint32 counter;
+        
     }
 
     // 24 bytes (deposit) + 4 bytes (block number)
@@ -132,6 +144,7 @@ contract RaidenMicroTransferChannels {
         require(token.totalSupply() > 0);
 
         challenge_period = _challenge_period;
+        monitor_period = _challenge_period;
         owner_address = msg.sender;
         addTrustedContracts(_trusted_contracts);
     }
