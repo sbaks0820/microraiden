@@ -92,7 +92,7 @@ class PaywalledProxy:
         self.api.add_resource(ChannelManagementRoot, "/cm")
 
     def run(self,
-            host: str='localhost',
+            host: str='0.0.0.0',
             port: int=5000, debug:
             bool=False,
             ssl_context: list=None

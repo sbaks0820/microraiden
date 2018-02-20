@@ -105,6 +105,8 @@ class ChannelManager(gevent.Greenlet):
         self.log.debug('setting up channel manager, receiver=%s channel_contract=%s' %
                        (self.receiver, channel_manager_contract.address))
 
+        print('INIT:', self.state.unconfirmed_head_number)
+
     def __del__(self):
         self.stop()
 
@@ -403,6 +405,7 @@ class ChannelManager(gevent.Greenlet):
         c.balance = balance
         c.last_signature = signature
         c.mtime = time.time()
+        c.counter += 1
         self.state.set_channel(c)
         self.log.debug('registered payment (sender %s, block number %s, new balance %s)',
                        c.sender, open_block_number, balance)

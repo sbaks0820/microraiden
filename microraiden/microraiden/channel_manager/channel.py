@@ -43,6 +43,7 @@ class Channel(object):
         self.ctime = time.time()  # channel creation time
         self.mtime = self.ctime
         self.confirmed = False
+        self.counter = 1
 
         self.unconfirmed_topups = {}  # txhash to added deposit
 
