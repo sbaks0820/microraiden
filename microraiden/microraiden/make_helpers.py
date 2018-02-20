@@ -16,6 +16,9 @@ from microraiden.exceptions import (
     StateReceiverAddrMismatch,
     StateContractAddrMismatch
 )
+
+from microraiden.channel_monitor import ChannelMonitor
+
 from microraiden import constants
 from microraiden.config import NETWORK_CFG
 from microraiden.proxy.paywalled_proxy import PaywalledProxy
@@ -82,6 +85,51 @@ def make_channel_manager(
         )
         sys.exit(1)
 
+
+def make_channel_monitor(
+        private_key: str,
+        channel_manager_address: str,
+        state_filename: str,
+        web3: Web3
+) -> ChannelManager:
+    """
+    Args:
+        private_key (str): receiver's private key
+        channel_manager_address (str): channel manager contract to use
+        state_filename (str): path to the channel manager state database
+        web3 (Web3): web3 provider
+    Returns:
+        ChannelManager: intialized and synced channel manager
+
+    """
+    channel_manager_address = to_checksum_address(channel_manager_address)
+    channel_manager_contract = make_channel_manager_contract(web3, channel_manager_address)
+    token_address = channel_manager_contract.call().token()
+    token_abi = constants.CONTRACT_METADATA[constants.TOKEN_ABI_NAME]['abi']
+    token_contract = web3.eth.contract(abi=token_abi, address=token_address)
+    try:
+        return ChannelMonitor(
+            web3,
+            channel_manager_contract,
+            token_contract,
+            private_key,
+            state_filename
+        )
+    except StateReceiverAddrMismatch as e:
+        log.error(
+            'Receiver address does not match address stored in a saved state. '
+            'Use a different file, or backup and remove %s. (%s)' %
+            (state_filename, e)
+        )
+        sys.exit(1)
+
+    except StateContractAddrMismatch as e:
+        log.error(
+            'Channel contract address mismatch. '
+            'Saved state file is %s. Backup it, remove, then start proxy again (%s)' %
+            (state_filename, e)
+        )
+        sys.exit(1)
 
 def make_paywalled_proxy(
         private_key: str,
