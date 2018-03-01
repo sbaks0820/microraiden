@@ -3,8 +3,19 @@ import sys
 
 from web3 import Web3
 from web3.contract import Contract
-
+from eth_utils import (
+    decode_hex,
+    is_same_address,
+    is_checksum_address
+)
 from microraiden import Session
+from microraiden.constants import (
+    OUTSOURCE_MESSAGE,
+    MONITOR_SIGNATURE_ACCEPTED,
+    MONITOR_SIGNATURE_REJECTED,
+    MONITOR_CHANNEL_NOT_FOUND
+)
+
 from microraiden.utils import get_private_key, privkey_to_addr, create_signed_contract_transaction
 import logging
 import requests
@@ -18,6 +29,8 @@ from web3.middleware.pythonic import (
     pythonic_middleware,
     to_hexbytes,
 )
+
+from multiprocessing.connection import Listener
 
 # config = json.load(open('./monitor.json'))
 # size_extraData_for_poa = 200
@@ -36,6 +49,7 @@ class ChannelMonitor(gevent.Greenlet):
             self,
             web3: Web3,
             channel_manager_contract: Contract,
+            state_guardian_contract: Contract,
             token_contract: Contract,
             private_key: str,
             state_filename: str,
@@ -44,6 +58,7 @@ class ChannelMonitor(gevent.Greenlet):
         gevent.Greenlet.__init__(self)
         self.blockchain = Blockchain(
                 web3,
+                channel_manager_contract,
                 channel_manager_contract,
                 self,
                 n_confirmations=n_confirmations
@@ -67,7 +82,6 @@ class ChannelMonitor(gevent.Greenlet):
         
         assert self.state is not None
 
-        print('INIT:', self.state.unconfirmed_head_number)
 
     def __del__(self):
         self.stop()
@@ -88,72 +102,102 @@ class ChannelMonitor(gevent.Greenlet):
         self.state.update_sync_state(unconfirmed_head_number=unconfirmed_head_number,
                                      unconfirmed_head_hash=unconfirmed_head_hash,
                                      confirmed_head_number=confirmed_head_number,
-                                     confirmed_hash_hash=confirmed_head_hash)
+                                     confirmed_head_hash=confirmed_head_hash)
 
     def event_channel_opened(self, sender: str, open_block_number: int, deposit: int):
         assert is_checksum_address(sender)
         self.log.info('new channel opened (sender %s, block_number %s)', sender, open_block_number)
-        print('NEW CHANNEL DETECTED')
+
+   
+    def unconfirmed_event_channel_opened(self, sender: str, open_block_number: int, deposit: int):
+        assert is_checksum_address(sender)
+        self.log.info('new unconfirmed channel opened (sender %s, block_number %s)', sender, open_block_number)
+
+    def unconfirmed_event_channel_topup(self, sender, open_block_number, txhash, added_deposit):
+        assert is_checksum_address(sender)
+        self.log.info('unconfirmed top up of unconfirmed channel (sender %s, block_number %s, added %s)',
+                    sender, open_block_number, added_deposit)
+
+    def event_channel_topup(self, sender, open_block_number, txhash, added_deposit):
+        assert is_checksum-address(sender)
+        self.log.info(
+            'Deposit top up (sender %s, block number %s, added deposit %s)',
+            sender, open_block_number, added_deposit
+        )
+
+    def event_channel_settled(self, sender, open_block_number):
+        self.log.info(
+            'channel settled (sender %s, block number %s)',
+            sender, open_block_number
+        )
+
+    def event_channel_close_requested(self, sender, open_block_number, balance, timeout):
+        self.log.info(
+            'channel close requested (sender %s, block number %s, balance %s, timeout %s)',
+            sender, open_block_number, balance, timeout
+        )
+
 
     def wait_sync(self):
         self.blockchain.wait_sync()
 
-# def main(
-#         close_channel: bool = True,
-# ):
-#     w3 = Web3(HTTPProvider(config['web3path']))
-#     private_key = get_private_key(config['private-key'])
-#     print("Web3 Provider:", config['web3path'])
-#     print('Private Key  :', config['private-key'])
-#     print('Password Path:', config['password-path'])
-#     print('Resource Reqd:', config['resource'])
-#     print('Manager  Addr:', config['manager'])
-#     print('Close Channel:', close_channel)
-#     close_channels(private_key, config['password-path'], config['resource'], config['manager'], w3, close_channel)
-# 
-# def close_channels(
-#         private_key: str,
-#         password_path: str,
-#         resource: str,
-#         channel_manager_address: str = None,
-#         web3: Web3 = None,
-#         retry_interval: float = 5,
-#         endpoint_url: str = 'http://0.0.0.0:5000',
-#         close_channel: bool = False
-# ):
-# 
-#     channel_manaer = make_channel_monitor
-#     
-#     
-#     # Create the client session.
-#     session = Session(
-#         endpoint_url=endpoint_url,
-#         private_key=private_key,
-#         key_password_path=password_path,
-#         channel_manager_address=channel_manager_address,
-#         web3=web3,
-#         retry_interval=retry_interval,
-#         close_channel_on_exit=close_channel
-#     )
-#     print("Private Key:", private_key)
-#     addr = privkey_to_addr(private_key)
-#     print("Address:", addr)
-# #    response = requests.get('http://0.0.0.0:5000/api/1/channels/{}'.format(addr))
-#     response = session.get('{}/api/1/channels/{}'.format('http://0.0.0.0:5000', addr))
-#     print(response)
-# 
-#     response = session.get('{}/{}'.format('http://0.0.0.0:5000',resource))
-#     print(response, response.text)
-# #
-#     session.channel.close(balance=session.channel.balance-1)
-# 
-# #session.close_channel()
-#     response = requests.get('http://0.0.0.0:5000/api/1/channels/{}'.format(addr))
-#     print(response)
-#     channels = json.loads(response.text)
-#     print(channels)
-# 
-# 
-# if __name__ == '__main__':
-#     logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
-#     main()
+    @property
+    def channels(self):
+        return self.state.channels
+
+    @property
+    def unconfirmed_channels(self):
+        return self.state.unconfirmed_channels
+
+    @property
+    def pending_channels(self):
+        return self.state.pending_channels
+
+    def get_token_address(self):
+        return self.token_contract.address
+
+
+class MonitorListener(gevent.Greenlet):
+    def __init__(
+        self,
+        address: str,
+        port: int,
+        channel_monitor: ChannelMonitor
+    ):
+        gevent.Greenlet.__init__(self)
+        self.channel_monitor = channel_monitor
+        self.address = address
+        self.port = port
+        self.channel_monitor.start()
+        self.channel_monitor.wait_sync()
+        self.log = logging.getLogger('channel_monitor')
+        
+        self.listener = Listener((address,port))
+        self.conn = None
+
+
+    def listen_forever(self):
+        while True:
+            if self.conn.poll():
+                recv = self.conn.recv()
+                self.log.info(recv)
+                assert len(recv) == 3
+                sender,open_block_number,signature = recv
+                self.conn.send('signature accepted')
+
+            gevent.sleep(1)
+
+    def run(self):
+        assert (not self.conn)
+        conn = self.listener.accept()
+        recv = conn.recv()
+        try:
+            assert recv == 'Start Connection'
+            self.log.info('Started connection with cursomer.')
+        except AssertionError:
+            self.log.info('Error: connection to customer received message: %s', recv)
+            return
+
+        self.conn = conn
+        self.listen_forever()
+ 

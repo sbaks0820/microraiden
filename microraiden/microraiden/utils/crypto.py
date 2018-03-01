@@ -153,7 +153,6 @@ def eth_sign_typed_data_message_eip(typed_data: List[TypedData]) -> bytes:
 
     return keccak256(keccak256(*schema), *data)
 
-
 def eth_sign_typed_data_eip(privkey: str, typed_data: List[TypedData]) -> bytes:
     msg = eth_sign_typed_data_message_eip(typed_data)
     return sign(privkey, msg, v=27)
@@ -170,6 +169,11 @@ def get_balance_message(
         ('address', 'contract', contract_address)
     ])
 
+
+def get_guardian_message(
+        receiver: str, open_block_number: int, balance: int, contract_address: str
+) -> bytes:
+    return 
 
 def sign_balance_proof(
         privkey: str, receiver: str, open_block_number: int, balance: int, contract_address: str

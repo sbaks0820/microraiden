@@ -79,3 +79,10 @@ def get_network_id(network_name: str):
     """
     ids = list(NETWORK_NAMES.keys())
     return ids[list(NETWORK_NAMES.values()).index(network_name)]
+
+
+# Monitor communication messages
+OUTSOURCE_MESSAGE = 'monitor outsource'
+MONITOR_SIGNATURE_ACCEPTED = 'balance signature accepted'
+MONITOR_SIGNATURE_REJECTED = 'balance signature rejected'
+MONITOR_CHANNEL_NOT_FOUND = 'Balance signature for unknown channel'

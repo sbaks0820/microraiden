@@ -64,7 +64,7 @@ class Session(requests.Session):
             log.warning('No endpoint URL specified to request a closing signature.')
             self.on_cooperative_close_denied()
             return
-
+        
         log.debug(
             'Requesting closing signature from server for balance {} on channel {}/{}/{}.'
             .format(
@@ -287,7 +287,7 @@ class Session(requests.Session):
             log.error("No channel could be created or sufficiently topped up.")
             return False
 
-        self.channel.create_transfer(price)
+        balance_sig = self.channel.create_transfer(price)
         log.debug(
             'Sending new balance proof. New channel balance: {}/{}'
             .format(self.channel.balance, self.channel.deposit)

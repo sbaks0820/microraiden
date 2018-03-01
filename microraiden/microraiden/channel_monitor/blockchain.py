@@ -22,6 +22,7 @@ class Blockchain(gevent.Greenlet):
             self,
             web3: Web3,
             channel_manager_contract: Contract,
+            state_guardian_contract: Contract,
             channel_manager,
             n_confirmations,
             sync_chunk_size=100 * 1000
@@ -29,6 +30,7 @@ class Blockchain(gevent.Greenlet):
         gevent.Greenlet.__init__(self)
         self.web3 = web3
         self.channel_manager_contract = channel_manager_contract
+        self.state_guardian_contract = state_guardian_contract
         self.cm = channel_manager
         self.n_confirmations = n_confirmations
         self.log = logging.getLogger('blockchain')
@@ -109,37 +111,69 @@ class Blockchain(gevent.Greenlet):
             self.cm.state.update_sync_state(confirmed_head_number=self.sync_start_block)
         if self.cm.state.unconfirmed_head_number is None:
             self.cm.state.update_sync_state(unconfirmed_head_number=self.sync_start_block)
-        print('0:', self.cm.state.unconfirmed_head_number)
+        
         new_unconfirmed_head_number = self.cm.state.unconfirmed_head_number + self.sync_chunk_size
-        print('1:', new_unconfirmed_head_number)
         new_unconfirmed_head_number = min(new_unconfirmed_head_number, current_block)
-        print('2:', new_unconfirmed_head_number)
         new_confirmed_head_number = max(new_unconfirmed_head_number - self.n_confirmations, 0)
-        print('3:', new_confirmed_head_number)
         
         # return if blocks have already been processed
         if (self.cm.state.confirmed_head_number >= new_confirmed_head_number and
                 self.cm.state.unconfirmed_head_number >= new_unconfirmed_head_number):
-            print('took easy return')
             return
-        print('took the long way') 
+
+        # Look for events in the state guardian contract with the customer
+        # before the channel manager. If customer does something in between
+        # monitor probably needs to handle close rather than responding to 
+        # customer channel.
+
+        # filters_confirmed = {
+        #         'from_block': self.cm.state.confirmed_head_number + 1,
+        #         'to_block': new_confirmed_head_number,
+        # }
+
+        # filters_unconfirmed = {
+        #         'from_block': self.cm.state.unconfirmed_head_number + 1,
+        #         'to_block': new_unconfirmed_head_number
+        # 
+        # }
+
+        # self.log.debug(
+        #     'filtering for guardian events u:%s-%s c:%s-%s @%d',
+        #     filters_unconfirmed['from_block'],
+        #     filters_unconfirmed['to_block'],
+        #     filters_confirmed['from_block'],
+        #     filters_confirmed['to_block'],
+        #     current_block
+        # )
+
+        # logs = get_logs(
+        #     self.state_guardian_contract,
+        #     'Deposit',
+        #     **filters_unconfirmed
+        # )
+
+        # self.log.info(
+        #     '%d logs from guardian contract',
+        #     len(logs)
+        # )
+
         # filter for events after block_number
         filters_confirmed = {
             'from_block': self.cm.state.confirmed_head_number + 1,
             'to_block': new_confirmed_head_number,
-            'argument_filters': {
-                '_receiver_address': self.cm.state.receiver
-            }
+            #'argument_filters': {
+            #    '_receiver_address': self.cm.state.receiver
+            #}
         }
         filters_unconfirmed = {
             'from_block': self.cm.state.unconfirmed_head_number + 1,
             'to_block': new_unconfirmed_head_number,
-            'argument_filters': {
-                '_receiver_address': self.cm.state.receiver
-            }
+            #'argument_filters': {
+            #    '_receiver_address': self.cm.state.receiver
+            #}
         }
         self.log.debug(
-            'filtering for events u:%s-%s c:%s-%s @%d',
+            'filtering for channel events u:%s-%s c:%s-%s @%d',
             filters_unconfirmed['from_block'],
             filters_unconfirmed['to_block'],
             filters_confirmed['from_block'],
@@ -189,7 +223,7 @@ class Blockchain(gevent.Greenlet):
             **filters_unconfirmed
         )
         for log in logs:
-            assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
+            #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
             txhash = log['transactionHash']
             sender = log['args']['_sender_address']
             sender = to_checksum_address(sender)
@@ -215,7 +249,7 @@ class Blockchain(gevent.Greenlet):
             **filters_confirmed
         )
         for log in logs:
-            assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
+            #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
             txhash = log['transactionHash']
             sender = log['args']['_sender_address']
             sender = to_checksum_address(sender)
@@ -236,7 +270,7 @@ class Blockchain(gevent.Greenlet):
             **filters_confirmed
         )
         for log in logs:
-            assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
+            #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
             sender = log['args']['_sender_address']
             sender = to_checksum_address(sender)
             open_block_number = log['args']['_open_block_number']
@@ -251,12 +285,12 @@ class Blockchain(gevent.Greenlet):
             **filters_confirmed
         )
         for log in logs:
-            assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
+            #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
             sender = log['args']['_sender_address']
             sender = to_checksum_address(sender)
             open_block_number = log['args']['_open_block_number']
-            if (sender, open_block_number) not in self.cm.channels:
-                continue
+#            if (sender, open_block_number) not in self.cm.channels:
+#                continue
             balance = log['args']['_balance']
             try:
                 timeout = self.channel_manager_contract.call().getChannelInfo(
@@ -265,14 +299,14 @@ class Blockchain(gevent.Greenlet):
                     open_block_number
                 )[2]
             except BadFunctionCallOutput:
-                self.log.warning(
-                    'received ChannelCloseRequested event for a channel that doesn\'t '
-                    'exist or has been closed already (sender=%s open_block_number=%d)'
-                    % (sender, open_block_number))
-                self.cm.force_close_channel(sender, open_block_number)
+            #    self.log.warning(
+            #        'received ChannelCloseRequested event for a channel that doesn\'t '
+            #        'exist or has been closed already (sender=%s open_block_number=%d)'
+            #        % (sender, open_block_number))
+            #    self.cm.force_close_channel(sender, open_block_number)
                 continue
-            self.log.debug('received ChannelCloseRequested event (sender %s, block number %s)',
-                           sender, open_block_number)
+            #self.log.debug('received ChannelCloseRequested event (sender %s, block number %s)',
+            #               sender, open_block_number)
             try:
                 self.cm.event_channel_close_requested(sender, open_block_number, balance, timeout)
             except InsufficientBalance:

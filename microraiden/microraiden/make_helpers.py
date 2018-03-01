@@ -44,7 +44,9 @@ def make_channel_manager(
         private_key: str,
         channel_manager_address: str,
         state_filename: str,
-        web3: Web3
+        web3: Web3,
+        monitor_address: str = None,
+        monitor_port: int = None
 ) -> ChannelManager:
     """
     Args:
@@ -67,7 +69,9 @@ def make_channel_manager(
             channel_manager_contract,
             token_contract,
             private_key,
-            state_filename=state_filename
+            state_filename=state_filename,
+            monitor_address=monitor_address,
+            monitor_port=monitor_port
         )
     except StateReceiverAddrMismatch as e:
         log.error(
@@ -90,7 +94,7 @@ def make_channel_monitor(
         private_key: str,
         channel_manager_address: str,
         state_filename: str,
-        web3: Web3
+        web3: Web3,
 ) -> ChannelManager:
     """
     Args:
@@ -107,13 +111,15 @@ def make_channel_monitor(
     token_address = channel_manager_contract.call().token()
     token_abi = constants.CONTRACT_METADATA[constants.TOKEN_ABI_NAME]['abi']
     token_contract = web3.eth.contract(abi=token_abi, address=token_address)
+
     try:
         return ChannelMonitor(
             web3,
             channel_manager_contract,
+            channel_manager_contract,
             token_contract,
             private_key,
-            state_filename
+            state_filename,
         )
     except StateReceiverAddrMismatch as e:
         log.error(

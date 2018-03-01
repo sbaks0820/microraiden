@@ -49,6 +49,8 @@ class Channel:
         assert self.block is not None
         assert self._balance_sig
 
+        log.info('Type of balance_sig: %s', str(type(self._balance_sig)))
+
     @property
     def balance(self):
         return self._balance

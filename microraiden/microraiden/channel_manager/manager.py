@@ -33,7 +33,15 @@ from microraiden.exceptions import (
     InvalidContractVersion,
     NoBalanceProofReceived,
 )
-from microraiden.constants import CHANNEL_MANAGER_CONTRACT_VERSION
+from microraiden.constants import (
+    CHANNEL_MANAGER_CONTRACT_VERSION,
+    OUTSOURCE_MESSAGE,
+    MONITOR_SIGNATURE_ACCEPTED,
+    MONITOR_SIGNATURE_REJECTED,
+    MONITOR_CHANNEL_NOT_FOUND
+)
+
+from multiprocessing.connection import Client
 from .state import ChannelManagerState
 from .blockchain import Blockchain
 from .channel import Channel, ChannelState
@@ -51,7 +59,9 @@ class ChannelManager(gevent.Greenlet):
             token_contract: Contract,
             private_key: str,
             state_filename: str = None,
-            n_confirmations=1
+            monitor_address: str = None,
+            monitor_port: int = None,
+            n_confirmations=1,
     ) -> None:
         gevent.Greenlet.__init__(self)
         self.blockchain = Blockchain(
@@ -101,11 +111,17 @@ class ChannelManager(gevent.Greenlet):
         if not is_same_address(self.state.contract_address, channel_manager_contract.address):
             raise StateContractAddrMismatch('%s != %s' % (
                 channel_manager_contract.address, self.state.contract_address))
+    
+
+        if monitor_address:
+            self.monitor = Client((monitor_address, monitor_port))
+            self.monitor.send('Start Connection')
+            self.monitor_address = monitor_address
+            self.monitor_port = monitor_port
 
         self.log.debug('setting up channel manager, receiver=%s channel_contract=%s' %
                        (self.receiver, channel_manager_contract.address))
 
-        print('INIT:', self.state.unconfirmed_head_number)
 
     def __del__(self):
         self.stop()
@@ -384,6 +400,12 @@ class ChannelManager(gevent.Greenlet):
             raise InvalidBalanceProof('Recovered signer does not match the sender')
         return c
 
+    def send_proof_to_monitor(self, sender: str, open_block_number: int, signature: bytes):
+        self.monitor.send([sender, open_block_number, signature])
+        recv = self.monitor.recv()
+        assert recv == 'balance sig accepted'
+        
+
     def register_payment(self, sender: str, open_block_number: int, balance: int, signature: str):
         """Register a payment.
         Method will try to reconstruct (verify) balance update data
@@ -409,6 +431,10 @@ class ChannelManager(gevent.Greenlet):
         self.state.set_channel(c)
         self.log.debug('registered payment (sender %s, block number %s, new balance %s)',
                        c.sender, open_block_number, balance)
+
+        self.send_proof_to_monitor(sender, open_block_number, signature)
+        # self.outsource_channel(c.sender, open_block_number)
+
         return c.sender, received
 
     def reset_unconfirmed(self):
@@ -492,3 +518,26 @@ class ChannelManager(gevent.Greenlet):
             close channel on-chain."""
         for sender, open_block_number in self.pending_channels.keys():
             self.close_channel(sender, open_block_number)  # dispute by closing the channel
+
+    def get_monitor_connection(self, sender: str, open_block_number: int):
+        return self.monitor_connections[sender, open_block_number]
+
+    def outsource_channel(self, sender: str, open_block_number: int):
+        monitor_address = ('localhost', 6001)
+
+        assert (sender,open_block_number) in self.channels
+        assert (sender,open_block_number) not in self.monitor_connections
+        
+        conn = Client(monitor_address)
+        conn.send('outsource')    
+
+        self.monitor_connections[sender, open_block_number] = conn
+
+        log.info(
+            'assigned a monitor to outsource channel (sender %s, block %d)',
+            sender,
+            open_block_number
+        )
+
+    
+
