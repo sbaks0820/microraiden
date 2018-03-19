@@ -24,9 +24,9 @@ network_config_defaults = OrderedDict(
     (('channel_manager_address', None),
      ('start_sync_block', 0),
      ('gas_price', 20 * denoms.gwei),
-     ('gas_limit', 130000),
+     ('gas_limit', 200000),
      # pot = plain old transaction, for lack of better term
-     ('pot_gas_limit', 21000))
+     ('pot_gas_limit', 50000))
 )
 # create network config type that supports defaults
 NetworkConfig = partial(

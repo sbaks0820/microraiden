@@ -61,3 +61,11 @@ class InsecureStateFile(StateFileException):
 class NetworkIdMismatch(StateFileException):
     """RPC endpoint and database have different network id."""
     pass
+
+class MonitorRefusedOutsource(MicroRaidenException):
+    """Manager didn't receive acknowledgement of ourtsource message."""
+    pass
+
+class NoDepositDetected(MicroRaidenException):
+    """Monitor didn't see a deposit in his contract."""
+    pass

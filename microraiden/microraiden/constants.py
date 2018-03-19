@@ -29,6 +29,8 @@ WEB3_PROVIDER_DEFAULT = "http://127.0.0.1:8545"
 
 CHANNEL_MANAGER_ABI_NAME = 'RaidenMicroTransferChannels'
 """str: name of the channel manager contract"""
+CHANNEL_MONITOR_ABI_NAME = 'StateGuardian'
+"""str: name of the channel monitor contract""" 
 TOKEN_ABI_NAME = 'CustomToken'
 """str: name of the token contract"""
 CONTRACTS_ABI_JSON = 'data/contracts.json'
@@ -83,6 +85,15 @@ def get_network_id(network_name: str):
 
 # Monitor communication messages
 OUTSOURCE_MESSAGE = 'monitor outsource'
+MONITOR_OUTSOURCE_ACCEPTED = 'outsource request accepted'
 MONITOR_SIGNATURE_ACCEPTED = 'balance signature accepted'
 MONITOR_SIGNATURE_REJECTED = 'balance signature rejected'
 MONITOR_CHANNEL_NOT_FOUND = 'Balance signature for unknown channel'
+NEW_BALANCE_SIG = 'new balance sig'
+IGNORE_BALANCE_SIG = 'balance sig ignored'
+IGNORE_SAME_BALANCE_SIG = 'same balance sig as before'
+BALANCE_SIG_ACCEPTED = 'balance sig accept'
+BALANCE_SIG_NOT_ACCEPTED = 'balance sig is not correct'
+NO_CONTRACT_DEPOSIT = 'customer did not deposit ether'
+MONITOR_RECEIPT = 'monitor receipt'
+CONDITIONAL_PAYMENT = 'conditional payment'
