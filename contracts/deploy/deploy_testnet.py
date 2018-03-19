@@ -71,7 +71,7 @@ def main(**kwargs):
     supply *= 10**(token_decimals)
     txn_wait = 250
 
-    assert challenge_period >= 500, 'Challenge period should be >= 500 blocks'
+    #assert challenge_period >= 500, 'Challenge period should be >= 500 blocks'
 
 # PART OF TEMP FIX TO ISSUE 414 IN PULL REQUEST: https://github.com/raiden-network/microraiden/pull/416
 #    if chain_name == 'rinkeby':
@@ -125,6 +125,21 @@ def main(**kwargs):
 
         print('RaidenMicroTransferChannels address is', microraiden_address)
 
+        owner = web3.eth.accounts[1]
+        assert owner and is_address(owner), 'Invalid owner provided.'
+        owner = to_checksum_address(owner)
+        print('Owner is', owner)
+        assert web3.eth.getBalance(owner) > 0, 'Account with insuficient funds.'
+        
+        guardian_contract = chain.provider.get_contract_factory('StateGuardian')
+        txhash = guardian_contract.deploy(
+            args=[],
+            transaction={'from': owner}
+        )
+        receipt = check_succesful_tx(chain.web3, txhash, txn_wait)
+        guardian_address = receipt['contractAddress']
+
+        print('StateGuardian address is', guardian_address)
 
 if __name__ == '__main__':
     main()
