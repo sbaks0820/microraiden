@@ -33,7 +33,6 @@ class Channel:
             state: State = State.open,
             on_settle: Callable[['Channel'], None] = lambda channel: None
     ):
-        self.counter = 1
         self._balance = 0
         self._balance_sig = None
 
@@ -62,7 +61,6 @@ class Channel:
     def update_balance(self, value):
         self._balance = value
         self._balance_sig = self.sign()
-        self.counter += 1
 
     @property
     def balance_sig(self):

@@ -40,7 +40,6 @@ class Channel(object):
         self.last_signature = None
         # if set, this is the absolute block_number the channel can be settled
         self.settle_timeout = -1
-        self.monitor_timeout = -1
         self.ctime = time.time()  # channel creation time
         self.mtime = self.ctime
         self.confirmed = False
