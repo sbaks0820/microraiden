@@ -19,7 +19,12 @@ from .crypto import (
     sign_balance_proof,
     verify_balance_proof,
     sign_close,
-    verify_closing_sig
+    verify_closing_sig,
+    get_receipt_message,
+    sign_receipt,
+    verify_receipt,
+    sign_cond_payment,
+    verify_cond_payment
 )
 
 from .contract import (
@@ -27,6 +32,7 @@ from .contract import (
     create_transaction,
     create_signed_contract_transaction,
     create_contract_transaction,
+    create_local_contract_transaction,
     create_transaction_data,
     get_logs,
     get_event_blocking,
@@ -81,3 +87,16 @@ __all__ = [
     get_function_kwargs,
     pop_function_kwargs,
 ]
+
+def debug_print(i):
+    for x in i:
+        print(type(x),x)
+
+import inspect, re
+
+def varname(p):
+  for line in inspect.getframeinfo(inspect.currentframe().f_back)[3]:
+    m = re.search(r'\bvarname\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)', line)
+    if m:
+      return m.group(1)
+

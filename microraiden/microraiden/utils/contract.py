@@ -62,6 +62,7 @@ def create_transaction(
     return tx
 
 
+
 def create_signed_contract_transaction(
         private_key: str,
         contract: Contract,
@@ -115,6 +116,14 @@ def create_contract_transaction(
         gas_limit=gas_limit
     )
 
+def create_local_contract_transaction(
+        contract: Contract,
+        funct_name: str,
+        args = List[Any],
+        value: int = 0,
+) -> dict:
+    data = create_transaction_data(contract, func_name, args)
+    return {'to': contract.address, 'data': data}
 
 def create_transaction_data(contract: Contract, func_name: str, args: List[Any]) -> bytes:
     data = contract._prepare_transaction(func_name, args)['data']

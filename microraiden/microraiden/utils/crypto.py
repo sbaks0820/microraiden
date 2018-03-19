@@ -169,18 +169,35 @@ def get_balance_message(
         ('address', 'contract', contract_address)
     ])
 
-
-def get_guardian_message(
-        receiver: str, open_block_number: int, balance: int, contract_address: str
-) -> bytes:
-    return 
-
 def sign_balance_proof(
         privkey: str, receiver: str, open_block_number: int, balance: int, contract_address: str
 ) -> bytes:
     msg = get_balance_message(receiver, open_block_number, balance, contract_address)
     return sign(privkey, msg, v=27)
 
+def get_receipt_message(
+        customer: str, sender: str, open_block_number: int, image: bytes, t_start: int, t_expire: int) -> bytes:
+    return eth_sign_typed_data_message([
+        ('address', 'customer', customer),
+        ('address', 'sender', sender),
+        ('uint32', 'block created', open_block_number),
+        ('uint32', 'start time', t_start),
+        ('uint32', 'expire time', t_expire),
+        ('bytes', 'image', image)
+    ])
+
+def sign_receipt(
+        privkey: str, customer: str, sender: str, open_block_number: int, image: bytes, t_start: int, t_expire: int) -> bytes:
+    msg = get_receipt_message(customer, sender, open_block_number, image, t_start, t_expire)
+    #print('msg', type(msg), msg)
+    return sign(privkey, msg, v=27)
+
+
+def sign_balance_proof_hash(
+        privkey: str, receiver: str, open_block_number: int, balance: int, contract_address: str
+) -> bytes:
+    msg = get_balance_message(receiver, open_block_number, balance, contract_address)
+    return msg
 
 def verify_balance_proof(
         receiver: str,
@@ -190,8 +207,50 @@ def verify_balance_proof(
         contract_address: str
 ) -> str:
     msg = get_balance_message(receiver, open_block_number, balance, contract_address)
+    #print('msg', type(msg), msg)
     return addr_from_sig(balance_sig, msg)
 
+def verify_receipt(
+        customer: str,
+        sender: str,
+        open_block_number: int,
+        image: bytes,
+        t_start: int,
+        t_expire: int,
+        receipt_sig: bytes
+) -> str:
+    msg = get_receipt_message(customer, sender, open_block_number, image, t_start, t_expire)
+    #print('msg', type(msg), msg)
+    return addr_from_sig(receipt_sig, msg)
+
+def sign_cond_payment(
+    privkey: str,
+    payout: int,
+    cond_transfer: bool,
+    _hash: bytes
+) -> bytes:
+    msg = eth_sign_typed_data_message([
+        ('uint32', 'payout', payout),
+        ('bool', 'cond_transfer', cond_transfer),
+        ('bytes', 'hash', _hash)
+    ])
+    #print ('msg', type(msg), msg)
+    return sign(privkey, msg, v=27)
+
+def verify_cond_payment(
+    payout: int,
+    cond_transfer: bool,
+    _hash: bytes,
+    sig: bytes
+) -> str:
+    msg = eth_sign_typed_data_message([
+        ('uint32', 'payout', payout),
+        ('bool', 'cond_transfer', cond_transfer),
+        ('bytes', 'hash', _hash)
+    ])
+    #print ('msg', type(msg), msg)
+    return addr_from_sig(sig, msg)
+    
 
 def get_closing_message(
         sender: str,
@@ -206,7 +265,6 @@ def get_closing_message(
         ('uint192', 'balance', (balance, 192)),
         ('address', 'contract', contract_address)
     ])
-
 
 def sign_close(
         privkey: str,

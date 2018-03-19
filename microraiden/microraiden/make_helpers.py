@@ -39,6 +39,12 @@ def make_channel_manager_contract(web3: Web3, channel_manager_address: str) -> C
         address=channel_manager_address
     )
 
+def make_channel_monitor_contract(web3: Web3, channel_monitor_address: str) -> Contract:
+    return web3.eth.contract(
+        abi=constants.CONTRACT_METADATA[constants.CHANNEL_MONITOR_ABI_NAME]['abi'],
+        address=channel_monitor_address
+    )
+
 
 def make_channel_manager(
         private_key: str,
@@ -93,6 +99,7 @@ def make_channel_manager(
 def make_channel_monitor(
         private_key: str,
         channel_manager_address: str,
+        channel_monitor_address: str,
         state_filename: str,
         web3: Web3,
 ) -> ChannelManager:
@@ -108,6 +115,8 @@ def make_channel_monitor(
     """
     channel_manager_address = to_checksum_address(channel_manager_address)
     channel_manager_contract = make_channel_manager_contract(web3, channel_manager_address)
+    channel_monitor_address = to_checksum_address(channel_monitor_address)
+    channel_monitor_contract = make_channel_monitor_contract(web3, channel_monitor_address)
     token_address = channel_manager_contract.call().token()
     token_abi = constants.CONTRACT_METADATA[constants.TOKEN_ABI_NAME]['abi']
     token_contract = web3.eth.contract(abi=token_abi, address=token_address)
@@ -116,7 +125,7 @@ def make_channel_monitor(
         return ChannelMonitor(
             web3,
             channel_manager_contract,
-            channel_manager_contract,
+            channel_monitor_contract,
             token_contract,
             private_key,
             state_filename,
