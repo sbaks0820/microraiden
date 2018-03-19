@@ -11,7 +11,8 @@ from microraiden.utils import check_permission_safety
 from microraiden.exceptions import (
     InsecureStateFile
 )
-#from .channel import Channel, ChannelState
+
+from .channel import Channel, ChannelState
 
 log = logging.getLogger(__name__)
 
@@ -311,9 +312,9 @@ class ChannelManagerState(object):
         c.execute('SELECT * FROM topups WHERE channel_rowid = ?', [channel_rowid])
         return {result['txhash']: result['deposit'] for result in c.fetchall()}
 
-#    def set_channel(self, channel: Channel):
-#        """Update channel state"""
-#        self.add_channel(channel)
+    def set_channel(self, channel: Channel):
+        """Update channel state"""
+        self.add_channel(channel)
 
     def channel_exists(self, sender: str, open_block_number: int):
         """Return true if channel(sender, open_block_number) exists"""
@@ -334,27 +335,27 @@ class ChannelManagerState(object):
             self.conn.execute('INSERT OR REPLACE INTO topups VALUES (?, ?, ?)',
                               [channel_rowid, txhash, str(deposit)])
 
-#    def add_channel(self, channel: Channel):
-#        """Add or update channel state"""
-#        assert channel.open_block_number > 0
-#        assert channel.state is not ChannelState.UNDEFINED
-#        assert is_address(channel.sender)
-#        params = [
-#            channel.sender,
-#            channel.open_block_number,
-#            str(channel.deposit),
-#            str(channel.balance),
-#            channel.last_signature,
-#            channel.settle_timeout,
-#            channel.mtime,
-#            channel.ctime,
-#            channel.state.value,
-#            channel.confirmed
-#        ]
-#        self.conn.execute(ADD_CHANNEL_SQL, params)
-#        rowid = self.get_channel_rowid(channel.sender, channel.open_block_number)
-#        self.set_unconfirmed_topups(rowid, channel.unconfirmed_topups)
-#        self.conn.commit()
+    def add_channel(self, channel: Channel):
+        """Add or update channel state"""
+        assert channel.open_block_number > 0
+        assert channel.state is not ChannelState.UNDEFINED
+        assert is_address(channel.sender)
+        params = [
+            channel.sender,
+            channel.open_block_number,
+            str(channel.deposit),
+            str(channel.balance),
+            channel.last_signature,
+            channel.settle_timeout,
+            channel.mtime,
+            channel.ctime,
+            channel.state.value,
+            channel.confirmed
+        ]
+        self.conn.execute(ADD_CHANNEL_SQL, params)
+        rowid = self.get_channel_rowid(channel.sender, channel.open_block_number)
+        self.set_unconfirmed_topups(rowid, channel.unconfirmed_topups)
+        self.conn.commit()
 
     def get_channel(self, sender: str, open_block_number: int):
         assert is_address(sender)
@@ -396,9 +397,9 @@ class ChannelManagerState(object):
         self.conn.execute('DELETE FROM `channels` WHERE `confirmed` = 0')
         self.conn.commit()
 
-#    def set_channel_state(self, sender: str, open_block_number: int, state: ChannelState):
-#        assert is_address(sender)
-#        sender = sender
-#        self.conn.execute('UPDATE `channels` SET `state` = ?'
-#                          'WHERE `sender` = ? AND `open_block_number` = ?',
-#                          [state, sender, open_block_number])
+    def set_channel_state(self, sender: str, open_block_number: int, state: ChannelState):
+        assert is_address(sender)
+        sender = sender
+        self.conn.execute('UPDATE `channels` SET `state` = ?'
+                          'WHERE `sender` = ? AND `open_block_number` = ?',
+                          [state, sender, open_block_number])

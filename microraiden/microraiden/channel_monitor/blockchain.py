@@ -22,7 +22,7 @@ class Blockchain(gevent.Greenlet):
             self,
             web3: Web3,
             channel_manager_contract: Contract,
-            state_guardian_contract: Contract,
+            channel_monitor_contract: Contract,
             channel_manager,
             n_confirmations,
             sync_chunk_size=100 * 1000
@@ -30,7 +30,7 @@ class Blockchain(gevent.Greenlet):
         gevent.Greenlet.__init__(self)
         self.web3 = web3
         self.channel_manager_contract = channel_manager_contract
-        self.state_guardian_contract = state_guardian_contract
+        self.channel_monitor_contract = channel_monitor_contract
         self.cm = channel_manager
         self.n_confirmations = n_confirmations
         self.log = logging.getLogger('blockchain')
@@ -126,195 +126,113 @@ class Blockchain(gevent.Greenlet):
         # monitor probably needs to handle close rather than responding to 
         # customer channel.
 
-        # filters_confirmed = {
-        #         'from_block': self.cm.state.confirmed_head_number + 1,
-        #         'to_block': new_confirmed_head_number,
-        # }
-
-        # filters_unconfirmed = {
-        #         'from_block': self.cm.state.unconfirmed_head_number + 1,
-        #         'to_block': new_unconfirmed_head_number
-        # 
-        # }
-
-        # self.log.debug(
-        #     'filtering for guardian events u:%s-%s c:%s-%s @%d',
-        #     filters_unconfirmed['from_block'],
-        #     filters_unconfirmed['to_block'],
-        #     filters_confirmed['from_block'],
-        #     filters_confirmed['to_block'],
-        #     current_block
-        # )
-
-        # logs = get_logs(
-        #     self.state_guardian_contract,
-        #     'Deposit',
-        #     **filters_unconfirmed
-        # )
-
-        # self.log.info(
-        #     '%d logs from guardian contract',
-        #     len(logs)
-        # )
-
-        # filter for events after block_number
-        filters_confirmed = {
-            'from_block': self.cm.state.confirmed_head_number + 1,
-            'to_block': new_confirmed_head_number,
-            #'argument_filters': {
-            #    '_receiver_address': self.cm.state.receiver
-            #}
-        }
-        filters_unconfirmed = {
-            'from_block': self.cm.state.unconfirmed_head_number + 1,
-            'to_block': new_unconfirmed_head_number,
-            #'argument_filters': {
-            #    '_receiver_address': self.cm.state.receiver
-            #}
-        }
-        self.log.debug(
-            'filtering for channel events u:%s-%s c:%s-%s @%d',
-            filters_unconfirmed['from_block'],
-            filters_unconfirmed['to_block'],
-            filters_confirmed['from_block'],
-            filters_confirmed['to_block'],
-            current_block
-        )
-
-        # unconfirmed channel created
-        logs = get_logs(
-            self.channel_manager_contract,
-            'ChannelCreated',
-            **filters_unconfirmed
-        )
-        for log in logs:
-            #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
-            sender = log['args']['_sender_address']
-            sender = to_checksum_address(sender)
-            deposit = log['args']['_deposit']
-            open_block_number = log['blockNumber']
+        #for job in self.cm.jobs:
+        for customer,sender,open_block_number in self.cm.jobs:
+           
+            # filter for events after block_number
+            filters_confirmed = {
+                'from_block': self.cm.state.confirmed_head_number + 1,
+                'to_block': new_confirmed_head_number,
+                'argument_filters': {
+                    '_receiver_address': customer
+                }
+            }
+            filters_unconfirmed = {
+                'from_block': self.cm.state.unconfirmed_head_number + 1,
+                'to_block': new_unconfirmed_head_number,
+                'argument_filters': {
+                    '_receiver_address': customer
+                }
+            }
             self.log.debug(
-                'received unconfirmed ChannelCreated event (sender %s, block number %s)',
-                sender,
-                open_block_number
-            )
-            self.cm.unconfirmed_event_channel_opened(sender, open_block_number, deposit)
-
-        # channel created
-        logs = get_logs(
-            self.channel_manager_contract,
-            'ChannelCreated',
-            **filters_confirmed
-        )
-        for log in logs:
-            #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
-            sender = log['args']['_sender_address']
-            sender = to_checksum_address(sender)
-            deposit = log['args']['_deposit']
-            open_block_number = log['blockNumber']
-            self.log.debug('received ChannelOpened event (sender %s, block number %s)',
-                           sender, open_block_number)
-            self.cm.event_channel_opened(sender, open_block_number, deposit)
-
-        # unconfirmed channel top ups
-        logs = get_logs(
-            self.channel_manager_contract,
-            'ChannelToppedUp',
-            **filters_unconfirmed
-        )
-        for log in logs:
-            #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
-            txhash = log['transactionHash']
-            sender = log['args']['_sender_address']
-            sender = to_checksum_address(sender)
-            open_block_number = log['args']['_open_block_number']
-            added_deposit = log['args']['_added_deposit']
-            self.log.debug(
-                'received top up event (sender %s, block number %s, deposit %s)',
-                sender,
-                open_block_number,
-                added_deposit
-            )
-            self.cm.unconfirmed_event_channel_topup(
-                sender,
-                open_block_number,
-                txhash,
-                added_deposit
+                'filtering for channel events u:%s-%s c:%s-%s @%d',
+                filters_unconfirmed['from_block'],
+                filters_unconfirmed['to_block'],
+                filters_confirmed['from_block'],
+                filters_confirmed['to_block'],
+                current_block
             )
 
-        # confirmed channel top ups
-        logs = get_logs(
-            self.channel_manager_contract,
-            'ChannelToppedUp',
-            **filters_confirmed
-        )
-        for log in logs:
-            #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
-            txhash = log['transactionHash']
-            sender = log['args']['_sender_address']
-            sender = to_checksum_address(sender)
-            open_block_number = log['args']['_open_block_number']
-            added_deposit = log['args']['_added_deposit']
-            self.log.debug(
-                'received top up event (sender %s, block number %s, added deposit %s)',
-                sender,
-                open_block_number,
-                added_deposit
+            # channel close requested
+            logs = get_logs(
+                self.channel_manager_contract,
+                'ChannelCloseRequested',
+                **filters_confirmed
             )
-            self.cm.event_channel_topup(sender, open_block_number, txhash, added_deposit)
+            for log in logs:
+                self.log.info('detected a channel close request in channel manager')
+                #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
+                sender = log['args']['_sender_address']
+                receiver = log['args']['_receiver_address']
+                sender = to_checksum_address(sender)
+                receiver = to_checksum_address(receiver)
+                open_block_number = log['args']['_open_block_number']
+                balance = log['args']['_balance']
+                self.log.info('sucessfully parsed the event information')
+                self.log.info('address of channel manager %s', self.channel_manager_contract.address)
+                try:
+                    self.log.info('params to get info: %s, %s, %d', sender, self.cm.state.receiver, open_block_number)
+                    mtimeout,timeout = self.channel_manager_contract.call().getChannelInfo(
+                        sender,
+                        self.cm.state.receiver,
+                        open_block_number
+                    )[2:4]
+                except BadFunctionCallOutput:
+                    self.log.info('BadFunctionCallOutput error caught when trying to get channel info')
+                    continue
+                try:
+                    self.cm.event_channel_close_requested(sender, open_block_number, balance, timeout)
+                except InsufficientBalance:
+                    self.log.fatal('Insufficient ETH balance of the receiver. '
+                                   "Can't close the channel. "
+                                   'Will retry once the balance is sufficient')
+                    self.insufficient_balance = True
+                    # TODO: recover
 
-        # channel settled event
-        logs = get_logs(
-            self.channel_manager_contract,
-            'ChannelSettled',
-            **filters_confirmed
-        )
-        for log in logs:
-            #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
-            sender = log['args']['_sender_address']
-            sender = to_checksum_address(sender)
-            open_block_number = log['args']['_open_block_number']
-            self.log.debug('received ChannelSettled event (sender %s, block number %s)',
-                           sender, open_block_number)
-            self.cm.event_channel_settled(sender, open_block_number)
 
-        # channel close requested
-        logs = get_logs(
-            self.channel_manager_contract,
-            'ChannelCloseRequested',
-            **filters_confirmed
-        )
-        for log in logs:
-            #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
-            sender = log['args']['_sender_address']
-            sender = to_checksum_address(sender)
-            open_block_number = log['args']['_open_block_number']
-#            if (sender, open_block_number) not in self.cm.channels:
-#                continue
-            balance = log['args']['_balance']
-            try:
-                timeout = self.channel_manager_contract.call().getChannelInfo(
-                    sender,
-                    self.cm.state.receiver,
-                    open_block_number
-                )[2]
-            except BadFunctionCallOutput:
-            #    self.log.warning(
-            #        'received ChannelCloseRequested event for a channel that doesn\'t '
-            #        'exist or has been closed already (sender=%s open_block_number=%d)'
-            #        % (sender, open_block_number))
-            #    self.cm.force_close_channel(sender, open_block_number)
-                continue
-            #self.log.debug('received ChannelCloseRequested event (sender %s, block number %s)',
-            #               sender, open_block_number)
-            try:
-                self.cm.event_channel_close_requested(sender, open_block_number, balance, timeout)
-            except InsufficientBalance:
-                self.log.fatal('Insufficient ETH balance of the receiver. '
-                               "Can't close the channel. "
-                               'Will retry once the balance is sufficient')
-                self.insufficient_balance = True
-                # TODO: recover
+            logs = get_logs(
+                self.channel_manager_contract,
+                'DebugInputs',
+                **filters_unconfirmed
+            )
+
+            for log in logs:
+                msg = log['args']['msg']
+                sig = log['args']['sig']
+                
+                print('inputs')
+                print('msg', type(msg), msg)
+                print('sig', type(sig), sig)
+
+            logs = get_logs(
+                self.channel_manager_contract,
+                'DebugVerify',
+                **filters_unconfirmed
+            )
+
+            for log in logs:
+                sender = log['args']['_sender']
+                msg = log['args']['msg']
+                dig = log['args']['sig']
+
+                print('verify')
+                print('msg', type(msg), msg)
+                print('sig', type(sig), sig)
+
+            # channel settled event
+            logs = get_logs(
+                self.channel_manager_contract,
+                'ChannelSettled',
+                **filters_confirmed
+            )
+            for log in logs:
+                #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
+                sender = log['args']['_sender_address']
+                sender = to_checksum_address(sender)
+                open_block_number = log['args']['_open_block_number']
+                self.log.debug('received ChannelSettled event (sender %s, block number %s)',
+                               sender, open_block_number)
+                self.cm.event_channel_settled(sender, open_block_number)
 
         # update head hash and number
         try:

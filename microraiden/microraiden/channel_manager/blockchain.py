@@ -44,6 +44,7 @@ class Blockchain(gevent.Greenlet):
         self.insufficient_balance = False
         self.sync_start_block = NETWORK_CFG.start_sync_block
 
+        self.wait_to_dispute = dict()
 
     ''' 
         This is the main function that tries to call _update every time it is called. 
@@ -254,11 +255,12 @@ class Blockchain(gevent.Greenlet):
                 continue
             balance = log['args']['_balance']
             try:
-                timeout = self.channel_manager_contract.call().getChannelInfo(
+                self.log.info('params to get info: %s, %s, %d', sender, self.cm.state.receiver, open_block_number)
+                mtimeout,timeout = self.channel_manager_contract.call().getChannelInfo(
                     sender,
                     self.cm.state.receiver,
                     open_block_number
-                )[2]
+                    )[2:4]
             except BadFunctionCallOutput:
                 self.log.warning(
                     'received ChannelCloseRequested event for a channel that doesn\'t '
@@ -268,14 +270,61 @@ class Blockchain(gevent.Greenlet):
                 continue
             self.log.debug('received ChannelCloseRequested event (sender %s, block number %s)',
                            sender, open_block_number)
-            try:
-                self.cm.event_channel_close_requested(sender, open_block_number, balance, timeout)
-            except InsufficientBalance:
-                self.log.fatal('Insufficient ETH balance of the receiver. '
-                               "Can't close the channel. "
-                               'Will retry once the balance is sufficient')
-                self.insufficient_balance = True
+            self.log.info('received ChannelCloseRequested event (blocknumber %s, monitor period %s, timeout %s)', 
+                self.cm.state.confirmed_head_number, mtimeout, timeout)
+
+            self.wait_to_dispute[int(mtimeout)] = (sender, open_block_number, balance, mtimeout, timeout)
+
+            #try:
+            #    self.cm.event_channel_close_requested(sender, open_block_number, balance, mtimeout, timeout)
+            #except InsufficientBalance:
+            #    self.log.fatal('Insufficient ETH balance of the receiver. '
+            #                   "Can't close the channel. "
+            #                   'Will retry once the balance is sufficient')
+            #    self.insufficient_balance = True
                 # TODO: recover
+
+        logs = get_logs(
+            self.channel_manager_contract,
+            'MonitorInterference',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            sender = log['args']['_sender_address']
+            sender = to_checksum_address(sender)
+            open_block_number = log['args']['open_block_number']
+            balance_msg_sig = log['args']['_balance_msg_sig']
+            if (sender, open_block_number) not in self.cm.channels:
+                self.log.info("monitor interfered in channel that wasn't outsourced (sender %s open_block_number %s, balance_msg_sig %s)", 
+                    sender,
+                    open_block_number,
+                    balance_msg_sig)
+            #try:
+            self.cm.event_monitor_interference(sender, open_block_number, balance_msg_sig)
+            #except Exception as e:
+            #    print('\nERROR ERROR', e)
+        
+
+        # See which close requests are ready to be responded to
+        # and process them normally.
+        disputed = []
+        for mtimeout in self.wait_to_dispute:
+            if self.cm.state.confirmed_head_number > mtimeout:
+                try:
+                    self.log.info('Processing close request at block %s, mtimeout %s',
+                        self.cm.state.confirmed_head_number, mtimeout)
+                    self.cm.event_channel_close_requested(*self.wait_to_dispute[mtimeout])
+                except InsufficientBalance:
+                    self.log.fatal('Insufficient ETH balance of the receiver. '
+                                    "Can't close the channel. "
+                                    'Will retry once the balance is sufficient')
+                    self.insufficient_balance = True
+                    # TODO: recover
+                disputed.append(mtimeout)
+
+        for dispute in disputed:
+            del self.wait_to_dispute[dispute]
 
         # update head hash and number
         try:
