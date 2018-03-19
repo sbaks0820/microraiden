@@ -53,11 +53,10 @@ contract RaidenMicroTransferChannels {
         // replay of messages in later channels.
         uint32 open_block_number;
 
-        // // Counter which specifies which iteration the state of the channel
-        // // is currently at. Any change in the balance in the state triggers
-        // // this counter to increment.
+        // Counter which specifies which iteration the state of the channel
+        // is currently at. Any change in the balance in the state triggers
+        // this counter to increment.
         // uint32 counter;
-        
     }
 
     // 24 bytes (deposit) + 4 bytes (block number)
@@ -65,8 +64,17 @@ contract RaidenMicroTransferChannels {
         // Number of tokens owed by the sender when closing the channel.
         uint192 closing_balance;
 
+        // Block number at which the monitor period ends.
+        uint32 monitor_block_number;
+
         // Block number at which the challenge period ends, in case it has been initiated.
         uint32 settle_block_number;
+
+        // Evidence submitted by monitor in response to this request.
+        bytes32 evidence;
+
+        // Evidence signed by sender provided by monitor
+        bytes evidence_sig;
     }
 
     /*
@@ -115,6 +123,14 @@ contract RaidenMicroTransferChannels {
     event TrustedContract(
         address indexed _trusted_contract_address,
         bool _trusted_status);
+    event MonitorInterference(
+        address indexed _sender_address,
+        uint32 indexed open_block_number,
+        bytes indexed _balance_msg_sig);
+    event MonitorFuckedUp(
+        bytes indexed _receiver_sig,
+        bytes indexed _monitor_sig);
+    event MonitorCorrect();
 
 
     /*
@@ -136,7 +152,7 @@ contract RaidenMicroTransferChannels {
     {
         require(_token_address != 0x0);
         require(addressHasCode(_token_address));
-        require(_challenge_period >= 500);
+        //require(_challenge_period >= 500);
 
         token = Token(_token_address);
 
@@ -360,6 +376,46 @@ contract RaidenMicroTransferChannels {
         settleChannel(sender, receiver, _open_block_number, _balance);
     }
 
+
+    //function monitorInterfere(address sender, address receiver, uint32 _open_block_number, bytes _balance_msg_sig) external
+    //{
+    //    bytes32 key = getKey(sender, receiver, _open_block_number);
+    //    
+    //    require(channels[key].open_block_number > 0);
+    //    require(closing_requests[key].settle_block_number > 0);
+    //   
+    //    closing_requests[key].evidence = _balance_msg_sig;
+
+    //    MonitorInterference(sender, _open_block_number, _balance_msg_sig);
+    //}
+
+    event DebugVerify(address indexed _sender, bytes32 indexed msg, bytes indexed sig);
+    event DebugInputs(bytes32 indexed msg, bytes indexed sig);
+    function monitorEvidence(
+        address receiver,
+        uint32 open_block_number,
+        bytes32 balance_msg_hash,
+        bytes balance_msg_sig)
+        external
+        view
+    {
+        DebugInputs(balance_msg_hash, balance_msg_sig);
+        address s = ECVerify.ecverify(balance_msg_hash, balance_msg_sig);
+
+        bytes32 key = getKey(s, receiver, open_block_number);
+
+        DebugVerify(s, balance_msg_hash, balance_msg_sig);
+
+        require(channels[key].open_block_number > 0);
+        require(closing_requests[key].settle_block_number > 0);
+
+        closing_requests[key].evidence = balance_msg_hash;
+        closing_requests[key].evidence_sig = balance_msg_sig;
+
+        MonitorInterference(s, open_block_number, balance_msg_sig);
+    }
+
+
     /// @notice Sender requests the closing of the channel and starts the challenge period.
     /// This can only happen once.
     /// @param _receiver_address The address that receives tokens.
@@ -379,7 +435,10 @@ contract RaidenMicroTransferChannels {
         require(_balance <= channels[key].deposit);
 
         // Mark channel as closed
-        closing_requests[key].settle_block_number = uint32(block.number) + challenge_period;
+        closing_requests[key].monitor_block_number = uint32(block.number) + monitor_period;
+        require(closing_requests[key].monitor_block_number > block.number);
+        //closing_requests[key].settle_block_number = uint32(block.number) + challenge_period;
+        closing_requests[key].settle_block_number = closing_requests[key].monitor_block_number + challenge_period;
         require(closing_requests[key].settle_block_number > block.number);
         closing_requests[key].closing_balance = _balance;
         ChannelCloseRequested(msg.sender, _receiver_address, _open_block_number, _balance);
@@ -418,7 +477,7 @@ contract RaidenMicroTransferChannels {
         uint32 _open_block_number)
         external
         view
-        returns (bytes32, uint192, uint32, uint192, uint192)
+        returns (bytes32, uint192, uint32, uint32, uint192, uint192)
     {
         bytes32 key = getKey(_sender_address, _receiver_address, _open_block_number);
         require(channels[key].open_block_number > 0);
@@ -426,12 +485,32 @@ contract RaidenMicroTransferChannels {
         return (
             key,
             channels[key].deposit,
+            closing_requests[key].monitor_block_number,
             closing_requests[key].settle_block_number,
             closing_requests[key].closing_balance,
             withdrawn_balances[key]
         );
     }
 
+    /// @notice Function for retreiving the monitor evidence in a channel
+    /// @param _sender_address The address that sent the tokens.
+    /// @param _receiver_address The address that receives the tokens.
+    /// @param _open_block_number The block number at which a channel between the
+    /// sender and receiver was created.
+    /// @return Monitor evidence.
+    function getMonitorEvidence(
+        address _sender_address,
+        address _receiver_address,
+        uint32 _open_block_number)
+        external
+        view
+        returns (bytes32, bytes)
+    {
+        bytes32 key = getKey(_sender_address, _receiver_address, _open_block_number);
+        require(channels[key].open_block_number > 0);
+
+        return (closing_requests[key].evidence, closing_requests[key].evidence_sig);
+    }
     /*
      *  Public functions
      */
