@@ -183,7 +183,7 @@ def get_receipt_message(
         ('uint32', 'block created', open_block_number),
         ('uint32', 'start time', t_start),
         ('uint32', 'expire time', t_expire),
-        ('bytes', 'image', image)
+        ('bytes32', 'image', image)
     ])
 
 def sign_receipt(
