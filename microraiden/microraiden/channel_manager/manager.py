@@ -30,7 +30,8 @@ from microraiden.utils import (
     sign_receipt,
     verify_receipt,
     sign_cond_payment,
-    verify_cond_payment
+    verify_cond_payment,
+    get_balance_message
 )
 
 #from microraiden.exceptions import (
@@ -67,6 +68,7 @@ from microraiden.constants import *
 
 from web3.contract import Contract
 from microraiden import constants
+from collections import defaultdict
 
 from multiprocessing.connection import Client
 from .state import ChannelManagerState
@@ -75,6 +77,19 @@ from .channel import Channel, ChannelState
 
 log = logging.getLogger(__name__)
 
+
+class MonitorReceipt:
+    def __init__(
+        self,
+        _t_start: int,
+        _t_expire: int,
+        _image: bytes,
+        _signature: bytes
+    ):
+        self.t_start = _t_start
+        self.t_expire = _t_expire
+        self.image = _image
+        self.signature = _signature
 
 class ChannelManager(gevent.Greenlet):
     """Manages channels from the receiver's point of view."""
@@ -98,6 +113,8 @@ class ChannelManager(gevent.Greenlet):
             n_confirmations=n_confirmations
         )
         self.receiver = privkey_to_addr(private_key)
+        assert is_checksum_address(self.receiver)
+
         self.private_key = private_key
         self.channel_manager_contract = channel_manager_contract
         self.token_contract = token_contract
@@ -160,6 +177,8 @@ class ChannelManager(gevent.Greenlet):
             address=monitor_contract_address
         )
 
+        self.blockchain.channel_monitor_contract = self.channel_monitor_contract
+
         self.log.info('setting up channel manager, receiver=%s channel_contract=%s' %
                        (self.receiver, channel_manager_contract.address))
 
@@ -178,7 +197,7 @@ class ChannelManager(gevent.Greenlet):
                 self.private_key,
                 self.channel_monitor_contract,
                 'deposit',
-                args=[],
+                args=[self.channel_manager_contract.address],
                 value=1,
             )
     
@@ -200,6 +219,8 @@ class ChannelManager(gevent.Greenlet):
         
         self.log.info('channel manager setup is finished')
 
+        self.previous_channel_sigs = {}
+        self.signed_receipts = {}
 
     def __del__(self):
         self.stop()
@@ -330,6 +351,73 @@ class ChannelManager(gevent.Greenlet):
     def event_channel_settled(self, sender, open_block_number):
         """Notify the channel manager that a channel has been settled."""
         assert is_checksum_address(sender)
+    
+        c = self.channels[sender,open_block_number]
+
+        closing_balance,monitor_balance,settle_block_number = self.channel_manager_contract.call().getClosingInfo(sender, self.state.receiver, open_block_number)
+
+        self.log.info('closing infor for channel (sender %s, open_block_number %d) is (closing_balance %d, monitor_balance %d, setlle_block_number %d)',
+            sender,
+            open_block_number,
+            closing_balance,
+            monitor_balance,
+            settle_block_number
+        )
+
+        if closing_balance < monitor_balance:
+            try:
+                m = self.signed_receipts[sender, open_block_number]
+                
+                self.log.info('sending recourse (sender %s, open_block_number %d, image %s, signature %s)',
+                    sender,
+                    open_block_number,
+                    m.image,
+                    m.signature
+                )
+
+                sig_addr = verify_receipt(
+                    self.state.receiver,
+                    to_checksum_address(sender),
+                    open_block_number,
+                    m.image,
+                    m.t_start,
+                    m.t_expire,
+                    m.signature
+                )
+          
+                self.log.info('signer of the receourse receipt %s', sig_addr)
+                if sig_addr.lower() == self.monitor_eth_address.lower():
+                    print('\n\nRECEIPT CHECKS OUT\n\n')
+                else:
+                    print('\n\nRECEIPT DOESNT CHECK OUT\n\n')
+            
+
+                raw_tx = create_signed_contract_transaction(
+                    self.private_key,
+                    self.channel_monitor_contract,
+                    'recourse',
+                    [
+                        sender,
+                        open_block_number,
+                        m.image,
+                        m.t_start,
+                        m.t_expire,
+                        m.signature,
+                        7
+                    ]
+                )
+
+                txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
+
+                self.log.info('sent recourse transaction (closing %d, monitor %d, txid %s)',
+                    closing_balance,
+                    monitor_balance,
+                    encode_hex(txid)
+                )
+            except KeyError:
+                self.log.info('DIDNT FIND THE RECEIPT. GET REKT')
+
+        
         self.log.info('Forgetting settled channel (sender %s, block number %s)',
                       sender, open_block_number)
         self.state.del_channel(sender, open_block_number)
@@ -520,18 +608,29 @@ class ChannelManager(gevent.Greenlet):
         return c
 
     def send_proof_to_monitor(self, sender: str, receiver: str, open_block_number: int, balance: int, signature: bytes):
+        sender = to_checksum_address(sender)
+        receiver = to_checksum_address(receiver)
+
         balance_message_hash = get_balance_message(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address)
         print('\nbalance sig')
         debug_print([sender, receiver, open_block_number, balance_message_hash, signature])
         self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, balance_message_hash, signature])
 
 #        self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, signature])
-         
+        self.log.info('WAIT FOR MONITOR TO ACCEPT BALANCE SIG') 
+        #while not self.monitor.poll():
+        #    pass
+
         recv = self.monitor.recv()
-        
+        self.log.info('MONITOR RESPONDED')
+
         if recv == BALANCE_SIG_NOT_ACCEPTED:
-            self.log.info("monitor didn't accep the signature")
+            self.log.info("monitor didn't accept the signature")
             return
+
+        self.log.info('GOT TO THIS POINT CHECKING TYPE AND RETURN VALUE (type %s)',
+            str(type(recv))
+        )
 
         if type(recv) == list and recv[0] == MONITOR_RECEIPT:
             _customer,_sender,_open_block_number,_image,_t_start,_t_expire = recv[1]
@@ -542,7 +641,11 @@ class ChannelManager(gevent.Greenlet):
             assert _t_expire > _t_start
 
             signed_receipt_msg = recv[2]
-        
+      
+            m = MonitorReceipt(_t_start, _t_expire, _image, signed_receipt_msg)
+
+            self.signed_receipts[sender, open_block_number] = m 
+
 #            debug_print(recv)
 
             sig_addr = verify_receipt(
@@ -571,6 +674,15 @@ class ChannelManager(gevent.Greenlet):
 
             self.monitor.send([CONDITIONAL_PAYMENT, _customer, _sender, _open_block_number, 1, True, _image, cond_payment_sig])
 
+            #while not self.monitor.poll():
+            #    gevent.sleep(0.5)
+
+            recv = self.monitor.recv()
+
+            assert recv == END_OF_FAIR_EXCHANGE
+
+        self.log.info('FINISHED THE COND PAYMENT FUNCTION')
+
 
     def register_payment(self, sender: str, open_block_number: int, balance: int, signature: str):
         """Register a payment.
@@ -594,9 +706,11 @@ class ChannelManager(gevent.Greenlet):
         c.balance = balance
         c.last_signature = signature
         c.mtime = time.time()
+        self.previous_channel_sigs[signature] = (sender, open_block_number, balance)
         self.state.set_channel(c)
         self.log.debug('registered payment (sender %s, block number %s, new balance %s)',
                        c.sender, open_block_number, balance)
+
 
         self.send_proof_to_monitor(sender, c.receiver, open_block_number, balance, signature)
 
@@ -687,30 +801,15 @@ class ChannelManager(gevent.Greenlet):
     def get_monitor_connection(self, sender: str, open_block_number: int):
         return self.monitor_connections[sender, open_block_number]
 
-    def event_monitor_interference(self, sender: str, open_block_number: int, balance_msg_sig: bytes):
+    def event_monitor_interference(self, sender: str, open_block_number: int):
         assert is_checksum_address(sender)
-        print('\ninputs from event data')
-        self.log.info('monitor sent interference (sender %s, open_block_number %d, balance_msg_sig %s, %s',
-            sender,
-            open_block_number,
-            balance_msg_sig,
-            encode_hex(balance_msg_sig)
-        )
         balance_msg, balance_sig = self.channel_manager_contract.call().getMonitorEvidence(
             sender,
             self.state.receiver,
             open_block_number
         )
 
-        print('\ninputs from calling contract')
-        self.log.info('balance_msg_sig %s, %s',
-            balance_sig,
-            encode_hex(balance_sig)
-        )
         channel = self.channels[sender, open_block_number]
-
-
-        self.log.info('channel last signature bytes %s', channel.last_signature)
 
         sig_addr = verify_balance_proof(
             self.receiver,
@@ -730,9 +829,96 @@ class ChannelManager(gevent.Greenlet):
             )
 
         else:
+            if encode_hex(balance_sig) in self.previous_channel_sigs:
+                self.log.info('\n\nthe monitor signature submitted was ACTUALLY an old one (sig %s)\n\n',
+                    encode_hex(balance_sig)
+                )
+            else:
+                self.log.info('\n\nthe monitor evidence was NOT found in previous payments (sig %s)\n\n',
+                    encode_hex(balance_sig)
+                )
+
+                print('\n\n%s\n\n', self.previous_channel_sigs)
+
             self.log.info('monitor responded with the most recent state, HOORAY!')
 
+    def reveal_monitor_submission(
+        self,
+        sender: str,
+        open_block_number: int,
+        balance: int,
+        monitor_timeout: int,
+        settle_timeout: int
+    ):
+        assert is_checksum_address(sender)
+        assert settle_timeout >= 0
+
+        if (sender, open_block_number) not in self.channels:
+            self.log.info('SHIIIET: trying to reveal evidence for channel not tracked!')
+            return
+        c = self.channels[sender, open_block_number]
+        
+        balance_msg, balance_sig = self.channel_manager_contract.call().getMonitorEvidence(
+            sender,
+            self.state.receiver,
+            open_block_number
+        )
+
+        assert encode_hex(balance_sig) in self.previous_channel_sigs
+        _sender,_open_block_number,_balance = self.previous_channel_sigs[encode_hex(balance_sig)]
+
+        assert _sender == sender
+        assert _open_block_number == open_block_number
+    
+        self.log.info('revealing evidence (channel balance %d, client balance %d, monitor balance %d)',
+            c.balance,
+            balance,
+            _balance
+        )
+
+        self.log.info('provided balance message %s',
+            balance_msg
+        )
+
+        self.log.info('calculatred balance messagae %s',
+            get_balance_message(
+                self.state.receiver,
+                open_block_number,
+                _balance,
+                self.channel_manager_contract.address
+            )
+        )
+
+        raw_tx = create_signed_contract_transaction(
+            self.private_key,
+            self.channel_manager_contract,
+            'revealMonitorEvidence',
+            args=[sender, self.receiver, open_block_number, _balance],
+        )
+
+        txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
+
+        self.log.info('sent reveal transaction %s', encode_hex(txid))
 
 
+class ManagerListener(gevent.Greenlet):
+    def __init__(
+        self,
+        monitor: Client,
+        channel_manager: ChannelManager
+    ):
+        gevent.Greenlet.__init__(self)
+        self.channel_manager = channel_manager
+    
+        self.log = logging.getLogger('channel_manager')
 
+        self.monitor = monitor
+
+    def listen_forever(self):
+        while True:
+            try:
+                print('listened for something')
+            except EOFError:
+                print('EOF')
+                break
 

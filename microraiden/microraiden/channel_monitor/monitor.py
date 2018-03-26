@@ -93,6 +93,8 @@ class MonitorJob(object):
         self.interfered = False
         self.sent_receipt = False
         self.sent_pre_image = False
+        self.respond = True
+        self.last_image = None
 
 class ChannelMonitor(gevent.Greenlet):
 
@@ -104,7 +106,8 @@ class ChannelMonitor(gevent.Greenlet):
             token_contract: Contract,
             private_key: str,
             state_filename: str,
-            n_confirmations=1
+            n_confirmations=1,
+            try_to_make_some_money: bool = True
     ) -> None:
         gevent.Greenlet.__init__(self)
         self.blockchain = Blockchain(
@@ -124,13 +127,10 @@ class ChannelMonitor(gevent.Greenlet):
         self. n_confirmations = n_confirmations
         network_id = int(web3.version.network)
         self.rng = SystemRandom()
+        self.try_to_make_some_money = try_to_make_some_money 
 
-        
         self.log.info('new receiver address %s', self.channel_manager_owner)
-
-
-        # self.check_contract_version()
-       
+        
         self.state = ChannelManagerState(state_filename)
         self.state.setup_db(
             network_id,
@@ -160,11 +160,11 @@ class ChannelMonitor(gevent.Greenlet):
 
             txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
 
-            self.log.info('waiting for tx %s', txid)
+            self.log.info('waiting for tx %s', encode_hex(txid))
 
             wait_for_transaction(self.blockchain.web3, txid)
 
-            self.log.info('transaction %s mined', txid)
+            self.log.info('transaction %s mined', encode_hex(txid))
 
         self.log.info('channel monitor setup is finished')
 
@@ -217,6 +217,10 @@ class ChannelMonitor(gevent.Greenlet):
             sender, open_block_number
         )
 
+    """
+    Event channel that is being monitored requested a close, time to respond
+    Only respond to it once though
+    """
     def event_channel_close_requested(self, sender: str, open_block_number: int, balance, timeout):
         self.log.info(
             'channel close requested (sender %s, block number %s, balance %s, timeout %s)',
@@ -251,7 +255,13 @@ class ChannelMonitor(gevent.Greenlet):
         self.log.info('sent monitor intereference (sender %s, block number %d, txid %s)',
             sender, open_block_number, txid)
 
+
+    """
+    Ensure the customer has made a DEPOSIT to the contract
+    """
     def verify_customer_deposit(self, customer: str):
+        customer = to_checksum_address(customer)
+
         customer_deposit = int(self.channel_monitor_contract.call().balance(to_checksum_address(customer)))
         
         self.log.info('Customer %s deposit is %d',
@@ -264,6 +274,9 @@ class ChannelMonitor(gevent.Greenlet):
         else:
             return False
     
+    """
+    An outsource message is received from the customer. Ensure customer deposit
+    """
     def on_outsource_requested(self, command: str, sender: str, customer: str, open_block_number: int):
         if (customer,sender,open_block_number) in self.jobs:
             return MONITOR_OUTSOURCE_ACCEPTED
@@ -282,10 +295,18 @@ class ChannelMonitor(gevent.Greenlet):
 
         return MONITOR_OUTSOURCE_ACCEPTED 
 
+    """
+    create a RECEIPT for the customer
+    """
     def create_signed_receipt(self, customer: str, sender: str, open_block_number: int, balance_message_hash: bytes, signature: str):
+
+        customer = to_checksum_address(customer)
+        sender = to_checksum_address(sender)
 
         pre_image = self.rng.randint(0,2**20)
         image = keccak256(pre_image) 
+
+        self.jobs[customer,sender,open_block_number].last_image = image
 
         delta_settle = int(self.channel_monitor_contract.call().delta_settle())
         curr_block = self.blockchain.web3.eth.blockNumber
@@ -305,39 +326,15 @@ class ChannelMonitor(gevent.Greenlet):
 
         return [MONITOR_RECEIPT, (customer,sender,open_block_number,image,t_start,t_expire), receipt_msg] 
 
-    def on_conditional_payment(self, command: str, customer: str, sender: str, open_block_number: int,
-            payout: int, conditional_transfer: bool, image: bytes, pay_sig: bytes):
-        print('\nconditional paymen\n')
-        debug_print([customer, sender, open_block_number, payout, conditional_transfer, image, pay_sig])
-        try:
-            job = self.jobs[customer,sender,open_block_number]
-        except KeyError:
-            self.log.info('no such channel being outsourced (customer %s sender %s open_block_number %s',
-                customer,
-                sender,
-                open_block_number
-            )
-            return None
-        
-        assert job.sent_receipt
-        assert payout > 0
-        
-        signer = verify_cond_payment(
-            payout,
-            conditional_transfer,
-            image,
-            pay_sig
-        )
-
-        self.log.info('conditional payment signed by %s, customer %s', signer, customer)
-        assert is_same_address(
-                signer,
-                customer
-               )
-
+    """
+    received a new BLANCE SIG from customer
+    """
     def on_new_balance_sig(self, command: str, customer: str,sender: str, open_block_number: int, balance_message_hash: bytes, signature: str):
         print('\nbalance sig')
         debug_print([customer, sender, open_block_number, balance_message_hash, signature])
+        customer = to_checksum_address(customer)
+        sender = to_checksum_address(sender)
+
         try:
             assert self.jobs[customer,sender,open_block_number].last_signature != signature
             sig_addr = addr_from_sig(decode_hex(signature), balance_message_hash)
@@ -352,10 +349,10 @@ class ChannelMonitor(gevent.Greenlet):
             #self.customer_fair_exchange(customer, sender, open_block_number, balance_message_hash, signature)
             self.jobs[customer,sender,open_block_number].sent_receipt = True
 
-            self.jobs[customer,sender,open_block_number].last_signature = signature
-            self.jobs[customer,sender,open_block_number].last_hash = balance_message_hash
             self.log.info('accepted balance signature (customer %s, sender %s, open_block_number %s',
                 customer, sender, open_block_number)
+            self.log.info('TYPE OF RECEIPT %s', str(type(receipt)))
+            self.log.info('RECEIPT %s', str(receipt))
             return receipt
         except KeyError:
             self.log.info('balance sig for job not being watched')
@@ -363,6 +360,56 @@ class ChannelMonitor(gevent.Greenlet):
         except AssertionError:
             self.log.info('customer sent the same signature as before')
             return IGNORE_SAME_BALANCE_SIG
+
+    """
+    COND PAYMENT signed by customer
+    """
+    def on_conditional_payment(self, command: str, customer: str, sender: str, open_block_number: int,
+            payout: int, conditional_transfer: bool, image: bytes, pay_sig: bytes):
+        print('\nconditional paymen\n')
+        debug_print([customer, sender, open_block_number, payout, conditional_transfer, image, pay_sig])
+        customer = to_checksum_address(customer)
+        sender = to_checksum_address(sender)
+
+        try:
+            job = self.jobs[customer,sender,open_block_number]
+        except KeyError:
+            self.log.info('no such channel being outsourced (customer %s sender %s open_block_number %s',
+                customer,
+                sender,
+                open_block_number
+            )
+            return
+        
+        assert job.sent_receipt
+        assert payout > 0
+        assert image == job.last_image 
+        
+        signer = verify_cond_payment(
+            payout,
+            conditional_transfer,
+            image,
+            pay_sig
+        )
+
+        self.log.info('conditional payment signed by %s, customer %s', signer, customer)
+        assert is_same_address(
+                signer,
+                customer
+               )
+
+        self.log.info('Accepting new balance signature (customer %s, sender %s, open block number %d, old hash %s, new hash %s)',
+            customer,
+            sender,
+            open_block_number,
+            self.jobs[customer,sender,open_block_number].last_hash,
+            balance_message_hash
+        )
+
+        self.jobs[customer,sender,open_block_number].last_signature = signature
+        self.jobs[customer,sender,open_block_number].last_hash = balance_message_hash
+      
+        return END_OF_FAIR_EXCHANGE
 
     def wait_sync(self):
         self.blockchain.wait_sync()
@@ -413,6 +460,8 @@ class MonitorListener(gevent.Greenlet):
                         response = self.channel_monitor.on_new_balance_sig(*recv)
                     elif recv[0] == CONDITIONAL_PAYMENT:
                         response = self.channel_monitor.on_conditional_payment(*recv)
+                    self.log.info('RESPONSE BEING SENT type %s, response %s',
+                        str(type(response)), str(response))
                     self.conn.send(response)
                 gevent.sleep(0.5)
             except EOFError:
@@ -435,4 +484,12 @@ class MonitorListener(gevent.Greenlet):
         self.log.info('channel monitor contract address %s',
             self.channel_monitor.channel_monitor_contract.address)
         self.listen_forever()
+
+    def stop(self):
+        if self.channel_monitor.running:
+            self.channel_monitor.stop()
+            self.channel_monitor.join()
+
+    def wait_sync(self):
+        self.channel_monitor.wait_sync()
  

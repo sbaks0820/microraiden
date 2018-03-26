@@ -44,6 +44,7 @@ class Blockchain(gevent.Greenlet):
         self.insufficient_balance = False
         self.sync_start_block = NETWORK_CFG.start_sync_block
 
+        self.channel_monitor_contract = None
         self.wait_to_dispute = dict()
 
     ''' 
@@ -294,17 +295,62 @@ class Blockchain(gevent.Greenlet):
             sender = log['args']['_sender_address']
             sender = to_checksum_address(sender)
             open_block_number = log['args']['open_block_number']
-            balance_msg_sig = log['args']['_balance_msg_sig']
             if (sender, open_block_number) not in self.cm.channels:
                 self.log.info("monitor interfered in channel that wasn't outsourced (sender %s open_block_number %s, balance_msg_sig %s)", 
                     sender,
                     open_block_number,
                     balance_msg_sig)
-            #try:
-            self.cm.event_monitor_interference(sender, open_block_number, balance_msg_sig)
-            #except Exception as e:
-            #    print('\nERROR ERROR', e)
+            
+            self.cm.event_monitor_interference(sender, open_block_number)
         
+
+        logs = get_logs(
+            self.channel_manager_contract,
+            'RevealSigner',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            self.log.info('DETECTED REVEAL SIGNER EVENT')
+
+        logs = get_logs(
+            self.channel_manager_contract,
+            'RevealCorrectBalance',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            self.log.info('DETECTED RevealCorrectBalance')
+
+        logs = get_logs(
+            self.channel_manager_contract,
+            'RevealIncorrectBalance',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            self.log.info('DETECTED RevealIncorrectBalance')
+
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'StealMonitorDeposit',
+            **filters_confirmed
+        )
+
+        for log in logs:
+            #self.log.info('STEAL THE MONITORS DEPOSIT FOR NOT RESPONDING CORRECTLY(%d, %d)', log['args']['_monitor_balance'], log['args']['_closing_balance'])
+            self.log.info('STEAL THE MONITORS DEPOSIT')
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'LeaveMonitorDeposit',
+            **filters_confirmed
+        )
+
+        for log in logs:
+            #self.log.info('LEAVE THE MONITORS DEPOSIT (%d, %d)', log['args']['_monitor_balance'], log['args']['_closing_balance'])
+            self.log.info('LEAVE THE MONITORS DEPOSIT')
 
         # See which close requests are ready to be responded to
         # and process them normally.
@@ -314,6 +360,7 @@ class Blockchain(gevent.Greenlet):
                 try:
                     self.log.info('Processing close request at block %s, mtimeout %s',
                         self.cm.state.confirmed_head_number, mtimeout)
+                    self.cm.reveal_monitor_submission(*self.wait_to_dispute[mtimeout])
                     self.cm.event_channel_close_requested(*self.wait_to_dispute[mtimeout])
                 except InsufficientBalance:
                     self.log.fatal('Insufficient ETH balance of the receiver. '

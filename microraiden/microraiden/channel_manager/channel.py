@@ -47,6 +47,8 @@ class Channel(object):
 
         self.unconfirmed_topups = {}  # txhash to added deposit
 
+        self.monitor_receipt = None
+
     @property
     def is_closed(self) -> bool:
         """
