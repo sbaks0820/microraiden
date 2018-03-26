@@ -2,7 +2,7 @@ pragma solidity ^0.4.17;
 
 import './Token.sol';
 import './lib/ECVerify.sol';
-//import './RaidenMicroTransferChannels.sol';
+import './RaidenMicroTransferChannels.sol';
 
 contract StateGuardian {
 
@@ -13,7 +13,7 @@ contract StateGuardian {
 
     event Dispute(
         address indexed _sender_address,
-        address indexed _channel_settle
+        uint32 indexed _channel_settle
     );
 
     event Resolve(
@@ -26,19 +26,27 @@ contract StateGuardian {
         bytes32 indexed _hash
     );
 
+    event Close(
+        uint32 _t_withdraw
+    );
+
+    event Withdraw();
+
     enum Flags { OK, DISPUTE, CLOSED, CHEATED }
 
     struct channel {
         uint deposit;
-        uint t_settle;
+        uint32 t_settle;
         Flags flag;
         uint payout;
+        RaidenMicroTransferChannels caddr;
     }
    
     Flags flag;
     uint public profit;
     uint32 public delta_settle;
     uint32 public delta_withdraw;
+    uint32 t_withdraw;
     uint public num_customers;
     uint public guardian_deposit;
     address public monitor = msg.sender;
@@ -54,10 +62,11 @@ contract StateGuardian {
         guardian_deposit = msg.value;
         delta_settle = _delta_settle;
         delta_withdraw = _delta_withdraw;
+        t_withdraw = 0;
         flag = Flags.OK;
     }
 
-    function deposit()
+    function deposit(address caddr)
         payable
         external
     {
@@ -70,6 +79,9 @@ contract StateGuardian {
             ID[msg.sender].flag = Flags.OK;
         }
         ID[msg.sender].deposit += msg.value;
+        ID[msg.sender].caddr = RaidenMicroTransferChannels(caddr);
+
+        num_customers += 1;
         
         CustomerDeposit(msg.sender, msg.value); 
     }
@@ -100,7 +112,7 @@ contract StateGuardian {
         return signer; 
     }
  
-    function setState(
+    function setstate(
         uint32 _payout,
         bool _cond_transfer,
         bytes32 _hash,
@@ -128,15 +140,159 @@ contract StateGuardian {
         );
 
         require(customer_signer == _customer);
-     
+
+        profit += _payout;
+//      send _payout to montor
+
+        ID[_customer].deposit = 0;
+        ID[_customer].t_settle = 0;
+        ID[_customer].flag = Flags.CLOSED;
+        ID[_customer].payout = 0;
+
+        num_customers -= 1;
+
+        Evidence(_customer, _payout, _hash); 
     }      
 
+
+    function triggerdispute()
+        external
+    {
+        if (ID[msg.sender].flag == Flags.OK) {
+            ID[msg.sender].flag = Flags.DISPUTE;
+            ID[msg.sender].t_settle = uint32(block.number + delta_settle);
+            Dispute(msg.sender, ID[msg.sender].t_settle);
+        }
+    }
+
+    function resolve()
+        external
+    {
+        if (flag == Flags.CHEATED ||
+           (ID[msg.sender].t_settle >= block.number && 
+            ID[msg.sender].flag == Flags.DISPUTE))
+        {
+            msg.sender.transfer(ID[msg.sender].deposit);
+            ID[msg.sender].t_settle = 0;
+            ID[msg.sender].deposit = 0;
+            ID[msg.sender].flag = Flags.CLOSED;
+            ID[msg.sender].payout = 0;
+            num_customers -= 1;
+            Resolve(msg.sender);
+        }
+    }
+
+    function stopmonitoring()
+        external
+    {
+        require(msg.sender == monitor);
+        flag = Flags.CLOSED;
+        t_withdraw = uint32(block.number + delta_withdraw);
+        Close(t_withdraw);
+    }
 
     function withdraw()
         external
     {
-        msg.sender.transfer(ID[msg.sender].deposit);
+        require(flag != Flags.CHEATED);
+        require(msg.sender == monitor);
+        
+        if (num_customers == 0 && 
+            block.number > t_withdraw &&
+            flag == Flags.CLOSED)
+        {
+            profit += guardian_deposit;
+            guardian_deposit = 0;
+            msg.sender.transfer(profit);
+            profit = 0;
+
+            Withdraw();
+        }
     }
+
+
+    function extractreceiptsignature(
+        address receiver,
+        address sender,
+        uint32 open_block_number,
+        uint32 t_start,
+        uint32 t_expire,
+        bytes32 image,
+        bytes monitor_sig)
+        returns(address)
+    {
+
+        bytes32 receipt_hash = keccak256(
+            keccak256(
+                'address customer',
+                'address sender',
+                'uint32 block created',
+                'uint32 start time',
+                'uint32 expire time',
+                'bytes32 image'
+            ),
+            keccak256(
+                msg.sender,
+                sender,
+                open_block_number,
+                t_start,
+                t_expire,
+                image
+            )
+        );
+   
+        address signer = ECVerify.ecverify(receipt_hash, monitor_sig);
+        return signer;
+    }
+
+    event StealMonitorDeposit(uint192 indexed _monitor_balance, uint192 indexed _closing_balance);
+    event LeaveMonitorDeposit(uint192 indexed _monitor_balance, uint192 indexed _closing_balance);
+    event DebugSigner(address _signer, bytes32 _image);
+    function recourse(
+        address sender,
+        uint32 open_block_number,
+        bytes32 image,
+        uint32 t_start,
+        uint32 t_expire,
+        bytes monitor_sig,
+        uint32 pre_image)
+        external
+    {        
+        require(flag != Flags.CHEATED);
+        //require(keccak256(pre_image) == image);
+
+        address signer = extractreceiptsignature(
+            msg.sender,
+            sender,
+            open_block_number,
+            t_start,
+            t_expire,
+            image,
+            monitor_sig
+        );
+
+        // require(signer == monitor);
+
+
+
+        uint192 closing_balance;
+        uint192 monitor_balance;
+        uint32 block_number;
+
+        (closing_balance, monitor_balance, block_number) = ID[msg.sender].caddr.getClosingInfo(sender, msg.sender, open_block_number);
+
+        if (
+            open_block_number > t_start &&
+            block_number < t_expire &&
+            closing_balance > monitor_balance)
+        {
+            StealMonitorDeposit(monitor_balance, closing_balance);
+            flag = Flags.CHEATED;
+        } else {
+            LeaveMonitorDeposit(monitor_balance, closing_balance);
+        }
+    } 
+
 
     function balance(address customer)
         external

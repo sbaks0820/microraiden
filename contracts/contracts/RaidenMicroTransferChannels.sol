@@ -52,11 +52,6 @@ contract RaidenMicroTransferChannels {
         // Supports creation of multiple channels between the 2 parties and prevents
         // replay of messages in later channels.
         uint32 open_block_number;
-
-        // Counter which specifies which iteration the state of the channel
-        // is currently at. Any change in the balance in the state triggers
-        // this counter to increment.
-        // uint32 counter;
     }
 
     // 24 bytes (deposit) + 4 bytes (block number)
@@ -75,6 +70,9 @@ contract RaidenMicroTransferChannels {
 
         // Evidence signed by sender provided by monitor
         bytes evidence_sig;
+
+        // Revealed balance from evidence
+        uint192 monitor_balance;
     }
 
     /*
@@ -377,20 +375,9 @@ contract RaidenMicroTransferChannels {
     }
 
 
-    //function monitorInterfere(address sender, address receiver, uint32 _open_block_number, bytes _balance_msg_sig) external
-    //{
-    //    bytes32 key = getKey(sender, receiver, _open_block_number);
-    //    
-    //    require(channels[key].open_block_number > 0);
-    //    require(closing_requests[key].settle_block_number > 0);
-    //   
-    //    closing_requests[key].evidence = _balance_msg_sig;
-
-    //    MonitorInterference(sender, _open_block_number, _balance_msg_sig);
-    //}
-
     event DebugVerify(address indexed _sender, bytes32 indexed msg, bytes indexed sig);
     event DebugInputs(bytes32 indexed msg, bytes indexed sig);
+    
     function monitorEvidence(
         address receiver,
         uint32 open_block_number,
@@ -489,6 +476,23 @@ contract RaidenMicroTransferChannels {
             closing_requests[key].settle_block_number,
             closing_requests[key].closing_balance,
             withdrawn_balances[key]
+        );
+    }
+
+    function getClosingInfo(
+        address _sender_address,
+        address _receiver_address,
+        uint32 _open_block_number)
+        external
+        view
+        returns (uint192, uint192, uint32)
+    {
+        bytes32 key = getKey(_sender_address, _receiver_address, _open_block_number);
+
+        return (
+            closing_requests[key].closing_balance,
+            closing_requests[key].monitor_balance,
+            closing_requests[key].settle_block_number
         );
     }
 
@@ -728,7 +732,7 @@ contract RaidenMicroTransferChannels {
         // channel.open_block_number will become 0
         // Change state before transfer call
         delete channels[key];
-        delete closing_requests[key];
+        // delete closing_requests[key];
 
         // Send the unwithdrawn _balance to the receiver
         uint192 receiver_remaining_tokens = _balance - withdrawn_balances[key];
@@ -745,6 +749,38 @@ contract RaidenMicroTransferChannels {
             receiver_remaining_tokens
         );
     }
+
+    event RevealSigner(address _signer_address);
+    event RevealCorrectBalance();
+    event RevealIncorrectBalance();
+
+    function revealMonitorEvidence(
+        address _sender_address,
+        address _receiver_address,
+        uint32 _open_block_number,
+        uint192 _balance)
+        external
+    {
+
+        bytes32 key = getKey(_sender_address, msg.sender, _open_block_number);
+      
+        address signer = extractBalanceProofSignature(
+            msg.sender,
+            _open_block_number,
+            _balance,
+            closing_requests[key].evidence_sig
+        );
+
+        RevealSigner(signer);
+
+        if (signer == _sender_address) {
+            closing_requests[key].monitor_balance = _balance;
+            RevealCorrectBalance();
+        } else {
+            RevealIncorrectBalance();
+        }
+    }
+
 
     /*
      *  Internal functions
