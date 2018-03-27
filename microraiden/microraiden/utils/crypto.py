@@ -180,9 +180,9 @@ def get_receipt_message(
     return eth_sign_typed_data_message([
         ('address', 'customer', customer),
         ('address', 'sender', sender),
-        ('uint32', 'block created', open_block_number),
-        ('uint32', 'start time', t_start),
-        ('uint32', 'expire time', t_expire),
+        ('uint32', 'block created', (open_block_number, 32)),
+        ('uint32', 'start time', (t_start, 32)),
+        ('uint32', 'expire time', (t_expire, 32)),
         ('bytes32', 'image', image)
     ])
 
@@ -223,31 +223,43 @@ def verify_receipt(
     #print('msg', type(msg), msg)
     return addr_from_sig(receipt_sig, msg)
 
-def sign_cond_payment(
-    privkey: str,
+def get_cond_payment_message(
+    sender: str,
+    open_block_number: int,
     payout: int,
     cond_transfer: bool,
     _hash: bytes
 ) -> bytes:
     msg = eth_sign_typed_data_message([
-        ('uint32', 'payout', payout),
+        ('address', 'sender', sender),
+        ('uint32', 'open block number', (open_block_number, 32)),
+        ('uint32', 'payout', (payout, 32)),
         ('bool', 'cond_transfer', cond_transfer),
-        ('bytes', 'hash', _hash)
+        ('bytes32', 'hash', _hash)
     ])
+    return msg
+
+def sign_cond_payment(
+    privkey: str,
+    sender: str,
+    open_block_number: int,
+    payout: int,
+    cond_transfer: bool,
+    _hash: bytes
+) -> bytes:
+    msg = get_cond_payment_message(sender, open_block_number, payout, cond_transfer, _hash)
     #print ('msg', type(msg), msg)
     return sign(privkey, msg, v=27)
 
 def verify_cond_payment(
+    sender: str,
+    open_block_number: int,
     payout: int,
     cond_transfer: bool,
     _hash: bytes,
     sig: bytes
 ) -> str:
-    msg = eth_sign_typed_data_message([
-        ('uint32', 'payout', payout),
-        ('bool', 'cond_transfer', cond_transfer),
-        ('bytes', 'hash', _hash)
-    ])
+    msg = get_cond_payment_message(sender, open_block_number, payout, cond_transfer, _hash)
     #print ('msg', type(msg), msg)
     return addr_from_sig(sig, msg)
     
