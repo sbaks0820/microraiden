@@ -46,6 +46,8 @@ class Blockchain(gevent.Greenlet):
 
         self.channel_monitor_contract = None
         self.wait_to_dispute = dict()
+        self.wait_to_resolve = dict()
+        self.resolve_timeouts = dict()
 
     ''' 
         This is the main function that tries to call _update every time it is called. 
@@ -302,7 +304,18 @@ class Blockchain(gevent.Greenlet):
                     balance_msg_sig)
             
             self.cm.event_monitor_interference(sender, open_block_number)
-        
+       
+#        logs = get_logs(
+#            self.channel_monitor_contract,
+#            'Dispute',
+#            **filters_confirmed
+#        )
+#
+#        for log in logs:
+#            self.log.info('DECETED the dispute successfully go throughi (customer %s, settle timeout %d)',
+#                log['args']['_sender_address'],
+#                log['args']['_channel_settle']
+#            )
 
         logs = get_logs(
             self.channel_manager_contract,
@@ -352,16 +365,140 @@ class Blockchain(gevent.Greenlet):
             #self.log.info('LEAVE THE MONITORS DEPOSIT (%d, %d)', log['args']['_monitor_balance'], log['args']['_closing_balance'])
             self.log.info('LEAVE THE MONITORS DEPOSIT')
 
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'ClosingInfo',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            closing_balance = log['args']['_closing_balance']
+            monitor_balance = log['args']['_monitor_balance']
+            settle_block = log['args']['_settle_block']
+            self.log.info('\n Channel closing info (closing balance %d, monitor balance %d, settle block %d)',
+                closing_balance,
+                monitor_balance,
+                settle_block
+            )
+
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'Dispute',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            customer = log['args']['_customer_address']
+            open_block_number = log['args']['_open_block_number']
+            sender = log['args']['_sender_address']
+            self.log.info('DETECTED UNCONFIMED DISPUTE from monitor contract (customer %s, sender %s, open_block_number %d)',
+                customer,
+                sender,
+                open_block_number
+            )
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'Dispute',
+            **filters_confirmed
+        )
+
+        for log in logs:
+            customer = to_checksum_address(log['args']['_customer_address'])
+            open_block_number = log['args']['_open_block_number']
+            sender = to_checksum_address(log['args']['_sender_address'])
+            settle_timeout = int(log['data'], 16)
+            self.log.info('DETECTED CONFIMED DISPUTE from monitor contract (customer %s, sender %s, open_block_number %d, settle timeout %d, current block %d)',
+                customer,
+                sender,
+                open_block_number,
+                settle_timeout,
+                self.cm.blockchain.web3.eth.blockNumber
+            )
+
+            self.wait_to_resolve[settle_timeout+1] = (customer, sender, open_block_number)
+            self.resolve_timeouts[sender,open_block_number] = settle_timeout+1
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'Resolve',
+            **filters_confirmed
+        )
+
+        for log in logs:
+            customer = to_checksum_address(log['args']['_sender_address'])
+            self.log.info('successfully resolved channel (customer %s)', customer)
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'DebugHash',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            pre_image = log['args']['_pre_image']
+            image = log['args']['_image']
+
+            self.log.info('\nDEBUG HASH (pre image %d, hash %s)', pre_image, image)
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'DebugSigner',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            signer = to_checksum_address(log['args']['_signer'])
+            self.log.info('\nDEBUG SIGNER (signer %s)', signer)
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'PayoutInfo',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            payout = log['args']['_payout']
+            deposit = log['args']['_deposit']
+            self.log.info('\nPAYOUT INFO (payout %d, deposit %d)\n', payout, deposit)
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'Evidence',
+            **filters_confirmed
+        )
+
+        for log in logs:
+            customer = to_checksum_address(log['args']['_customer_address'])
+            sender = to_checksum_address(log['args']['_sender_address'])
+            pre_image = log['args']['_pre_image']
+            open_block_number = int(log['data'], 16)
+
+            if (sender, open_block_number) not in self.cm.channels or customer != self.cm.receiver:
+                self.log.info('received SET STATE for unknown channel')
+            else:
+                self.log.info('Monitor called SET STATE (sender %s, open_block_number %d, pre_image %d)',
+                    sender,
+                    open_block_number,
+                    pre_image
+                )
+                self.cm.event_set_state(customer, sender, open_block_number, pre_image)
+
+
         # See which close requests are ready to be responded to
         # and process them normally.
         disputed = []
         for mtimeout in self.wait_to_dispute:
             if self.cm.state.confirmed_head_number > mtimeout:
                 try:
-                    self.log.info('Processing close request at block %s, mtimeout %s',
-                        self.cm.state.confirmed_head_number, mtimeout)
-                    self.cm.reveal_monitor_submission(*self.wait_to_dispute[mtimeout])
-                    self.cm.event_channel_close_requested(*self.wait_to_dispute[mtimeout])
+                    if not self.cm.monitor_channels[self.wait_to_dispute[mtimeout][0], self.wait_to_dispute[mtimeout][1]]:
+                        self.log.info("No EXPECTATION of monitor event responding due to no fair exchange")
+                    else:
+                        self.log.info('Processing close request at block %s, mtimeout %s',
+                            self.cm.state.confirmed_head_number, mtimeout)
+                        self.cm.reveal_monitor_submission(*self.wait_to_dispute[mtimeout])
+                        self.cm.event_channel_close_requested(*self.wait_to_dispute[mtimeout])
                 except InsufficientBalance:
                     self.log.fatal('Insufficient ETH balance of the receiver. '
                                     "Can't close the channel. "
@@ -372,6 +509,19 @@ class Blockchain(gevent.Greenlet):
 
         for dispute in disputed:
             del self.wait_to_dispute[dispute]
+
+        resolved = []
+        for stimeout in self.wait_to_resolve:
+            if self.cm.blockchain.web3.eth.blockNumber > stimeout:
+                self.log.info('Processing DISPUTE request at block %s, stimeout %s',
+                    self.cm.blockchain.web3.eth.blockNumber, stimeout
+                )
+                customer,sender,open_block_number = self.wait_to_resolve[stimeout]
+                self.cm.event_dispute(customer, sender, open_block_number)
+                resolved.append(stimeout)
+
+        for resolve in resolved:
+            del self.wait_to_resolve[resolve]
 
         # update head hash and number
         try:

@@ -234,6 +234,35 @@ class Blockchain(gevent.Greenlet):
                                sender, open_block_number)
                 self.cm.event_channel_settled(sender, open_block_number)
 
+            logs = get_logs(
+                self.channel_monitor_contract,
+                'Dispute',
+                **filters_confirmed
+            )
+
+            for log in logs:
+                customer = to_checksum_address(log['args']['_customer_address'])
+                sender = to_checksum_address(log['args']['_sender_address'])
+                open_block_number = log['args']['_open_block_number']
+                
+                self.log.info('Customer triggered a dispute (customer %s, sender %s, open_block_number %d)',
+                    customer,
+                    sender,
+                    open_block_number
+                )
+           
+                self.cm.event_customer_dispute(customer, sender, open_block_number)
+
+            logs = get_logs(
+                self.channel_monitor_contract,
+                'Resolve',
+                **filters_unconfirmed
+            )
+
+            for log in logs:
+                self.log.info('\n\n saw resolve event happen \n\n')
+
+
         # update head hash and number
         try:
             new_unconfirmed_head_hash = self.web3.eth.getBlock(new_unconfirmed_head_number).hash
