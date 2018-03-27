@@ -12,8 +12,10 @@ contract StateGuardian {
     );
 
     event Dispute(
+        address indexed _customer_address,
+        uint32 indexed _open_block_number,
         address indexed _sender_address,
-        uint32 indexed _channel_settle
+        uint32 _channel_settle
     );
 
     event Resolve(
@@ -21,9 +23,10 @@ contract StateGuardian {
     );
 
     event Evidence(
+        address indexed _customer_address,
         address indexed _sender_address,
-        uint indexed _payout,
-        bytes32 indexed _hash
+        uint32 indexed _pre_image,
+        uint32 _open_block_number
     );
 
     event Close(
@@ -87,6 +90,8 @@ contract StateGuardian {
     }
     
     function extract_state_signature(
+        address _sender,
+        uint32 _open_block_number,
         uint32 _payout,
         bool _cond_transfer,
         bytes32 _hash,
@@ -97,11 +102,15 @@ contract StateGuardian {
     {
         bytes32 message_hash = keccak256(
             keccak256(
+                'address sender',
+                'uint32 open block number',
                 'uint32 payout',
                 'bool cond_transfer',
                 'bytes32 hash'
             ),
             keccak256(
+                _sender,
+                _open_block_number,
                 _payout,
                 _cond_transfer,
                 _hash
@@ -111,14 +120,18 @@ contract StateGuardian {
         address signer = ECVerify.ecverify(message_hash, _signature);
         return signer; 
     }
- 
+
+    event DebugHash(uint32 indexed _pre_image, bytes32 indexed _image, bytes32 indexed _hash);
+    event DebugSigner(address _signer);
+    event PayoutInfo(uint _payout, uint _deposit);
     function setstate(
+        address _sender,
+        uint32 _open_block_number,
         uint32 _payout,
         bool _cond_transfer,
         bytes32 _hash,
-        bytes _pre_image,
+        uint32 _pre_image,
         bytes _customer_sig,
-        bytes _monitor_sig,
         address _customer)
         view
         external
@@ -127,22 +140,23 @@ contract StateGuardian {
         require(flag != Flags.CHEATED);
         require(_payout != ID[_customer].payout);
         require(_payout <= ID[_customer].deposit);
-
-        if (_cond_transfer) {
-           require(keccak256(_pre_image) == _hash);
-        }
+        require(keccak256(_pre_image) == _hash);
 
         address customer_signer = extract_state_signature(
+            _sender,
+            _open_block_number,
             _payout,
             _cond_transfer,
             _hash,
             _customer_sig
         );
 
+        DebugSigner(customer_signer);
         require(customer_signer == _customer);
 
         profit += _payout;
-//      send _payout to montor
+
+        _customer.transfer(ID[_customer].deposit - _payout);
 
         ID[_customer].deposit = 0;
         ID[_customer].t_settle = 0;
@@ -151,17 +165,17 @@ contract StateGuardian {
 
         num_customers -= 1;
 
-        Evidence(_customer, _payout, _hash); 
+        Evidence(_customer, _sender, _pre_image, _open_block_number);
     }      
 
 
-    function triggerdispute()
+    function triggerdispute(address _sender, uint32 _open_block_number)
         external
     {
         if (ID[msg.sender].flag == Flags.OK) {
             ID[msg.sender].flag = Flags.DISPUTE;
             ID[msg.sender].t_settle = uint32(block.number + delta_settle);
-            Dispute(msg.sender, ID[msg.sender].t_settle);
+            Dispute(msg.sender, _open_block_number, _sender, ID[msg.sender].t_settle);
         }
     }
 
@@ -169,7 +183,7 @@ contract StateGuardian {
         external
     {
         if (flag == Flags.CHEATED ||
-           (ID[msg.sender].t_settle >= block.number && 
+           (ID[msg.sender].t_settle < block.number && 
             ID[msg.sender].flag == Flags.DISPUTE))
         {
             msg.sender.transfer(ID[msg.sender].deposit);
@@ -247,7 +261,9 @@ contract StateGuardian {
 
     event StealMonitorDeposit(uint192 indexed _monitor_balance, uint192 indexed _closing_balance);
     event LeaveMonitorDeposit(uint192 indexed _monitor_balance, uint192 indexed _closing_balance);
-    event DebugSigner(address _signer, bytes32 _image);
+//    event DebugSigner(address _signer, bytes32 _image);
+    event ClosingInfo(uint192 indexed _closing_balance, uint192 indexed _monitor_balance, uint32 indexed _settle_block);
+
     function recourse(
         address sender,
         uint32 open_block_number,
@@ -273,16 +289,16 @@ contract StateGuardian {
 
         // require(signer == monitor);
 
-
-
         uint192 closing_balance;
         uint192 monitor_balance;
         uint32 block_number;
 
         (closing_balance, monitor_balance, block_number) = ID[msg.sender].caddr.getClosingInfo(sender, msg.sender, open_block_number);
 
+        ClosingInfo(closing_balance, monitor_balance, block_number);
+
         if (
-            open_block_number > t_start &&
+            open_block_number <= t_start &&
             block_number < t_expire &&
             closing_balance > monitor_balance)
         {
