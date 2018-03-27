@@ -102,7 +102,10 @@ def make_channel_monitor(
         channel_monitor_address: str,
         state_filename: str,
         web3: Web3,
-) -> ChannelManager:
+        cheat: bool = False,
+        _reveal_pre_image: bool = True,
+        _redeem_payment: bool = True
+) -> ChannelMonitor:
     """
     Args:
         private_key (str): receiver's private key
@@ -129,6 +132,9 @@ def make_channel_monitor(
             token_contract,
             private_key,
             state_filename,
+            try_to_make_some_money=cheat,
+            reveal_pre_image=_reveal_pre_image,
+            redeem_payment=_redeem_payment,
         )
     except StateReceiverAddrMismatch as e:
         log.error(
