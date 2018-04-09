@@ -63,10 +63,17 @@ def init_contract_address():
 def deployer_privkey():
     return remove_0x_prefix(encode_hex(keys[3]))
 
-
 @pytest.fixture(scope='session')
 def deployer_address(deployer_privkey):
     return privkey_to_addr(deployer_privkey)
+
+@pytest.fixture(scope='session')
+def monitor_privkey(scope='session'):
+    return remove_0x_prefix(encode_hex(keys[2]))
+
+@pytest.fixture(scope='session')
+def monitor_address(scope='session'):
+    return privkey_to_addr(monitor_privkey)
 
 
 @pytest.fixture(scope='session')
@@ -89,6 +96,13 @@ def channel_manager_abi(contract_abis):
 def channel_manager_bytecode(contract_abis):
     return contract_abis[CHANNEL_MANAGER_ABI_NAME]['bytecode']
 
+@pytest.fixture(scope='session')
+def channel_monitor_bytecode(contract_abis):
+    return contract_abis[CHANNEL_MONITOR_ABI_NAME]['bytecode']
+
+@pytest.fixture(scope='session')
+def channel_monitor_abi(contract_abis):
+    return contract.abis[CHANNEL_MONITOR_ABI_NAME]['abi']
 
 @pytest.fixture(scope='session')
 def token_abi(contract_abis):
@@ -110,3 +124,7 @@ def state_db_path(tmpdir):
     return ':memory:'
 #    db = tmpdir.join("state.db")
 #    return db.strpath
+
+@pytest.fixture
+def monitor_db_path(tmpdir):
+    return ":memory:"

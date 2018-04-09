@@ -157,6 +157,17 @@ def eth_sign_typed_data_eip(privkey: str, typed_data: List[TypedData]) -> bytes:
     msg = eth_sign_typed_data_message_eip(typed_data)
     return sign(privkey, msg, v=27)
 
+def get_monitor_balance_message(
+        receiver: str, open_block_number: int, balance: int, contract_address: str, nonce: int
+) -> bytes:
+    return eth_sign_typed_data_message([
+        ('string', 'message_id', 'Sender balance proof signature'),
+        ('address', 'receiver', receiver),
+        ('uint32', 'block_created', (open_block_number, 32)),
+        ('uint192', 'balance', (balance, 192)),
+        ('address', 'contract', contract_address),
+        ('uint32', 'nonce', (nonce, 32)),
+    ])
 
 def get_balance_message(
         receiver: str, open_block_number: int, balance: int, contract_address: str
@@ -175,29 +186,29 @@ def sign_balance_proof(
     msg = get_balance_message(receiver, open_block_number, balance, contract_address)
     return sign(privkey, msg, v=27)
 
+def sign_monitor_balance_proof(
+        privkey: str, receiver: str, open_block_number: int, balance: int, contract_address: str, nonce: int
+) -> bytes:
+    msg = get_monitor_balance_message(receiver, open_block_number, balance, contract_address, nonce)
+    return sign(privkey, msg, v=27)
+
 def get_receipt_message(
-        customer: str, sender: str, open_block_number: int, image: bytes, t_start: int, t_expire: int) -> bytes:
+        customer: str, sender: str, open_block_number: int, image: bytes, t_start: int, t_expire: int, balance_message_hash: bytes) -> bytes:
     return eth_sign_typed_data_message([
         ('address', 'customer', customer),
         ('address', 'sender', sender),
         ('uint32', 'block created', (open_block_number, 32)),
         ('uint32', 'start time', (t_start, 32)),
         ('uint32', 'expire time', (t_expire, 32)),
-        ('bytes32', 'image', image)
+        ('bytes32', 'image', image),
+        ('bytes32', 'evidence', balance_message_hash)
     ])
 
 def sign_receipt(
-        privkey: str, customer: str, sender: str, open_block_number: int, image: bytes, t_start: int, t_expire: int) -> bytes:
-    msg = get_receipt_message(customer, sender, open_block_number, image, t_start, t_expire)
+        privkey: str, customer: str, sender: str, open_block_number: int, image: bytes, t_start: int, t_expire: int, balance_message_hash: bytes) -> bytes:
+    msg = get_receipt_message(customer, sender, open_block_number, image, t_start, t_expire, balance_message_hash)
     #print('msg', type(msg), msg)
     return sign(privkey, msg, v=27)
-
-
-def sign_balance_proof_hash(
-        privkey: str, receiver: str, open_block_number: int, balance: int, contract_address: str
-) -> bytes:
-    msg = get_balance_message(receiver, open_block_number, balance, contract_address)
-    return msg
 
 def verify_balance_proof(
         receiver: str,
@@ -210,6 +221,18 @@ def verify_balance_proof(
     #print('msg', type(msg), msg)
     return addr_from_sig(balance_sig, msg)
 
+def verify_monitor_balance_proof(
+        receiver: str,
+        open_block_number: int,
+        balance: int,
+        balance_sig: bytes,
+        contract_address: str,
+        nonce: int,
+) -> str:
+    msg = get_monitor_balance_message(receiver, open_block_number, balance, contract_address, nonce)
+    #print('msg', type(msg), msg)
+    return addr_from_sig(balance_sig, msg)
+
 def verify_receipt(
         customer: str,
         sender: str,
@@ -217,9 +240,10 @@ def verify_receipt(
         image: bytes,
         t_start: int,
         t_expire: int,
+        balance_message_hash: bytes,
         receipt_sig: bytes
 ) -> str:
-    msg = get_receipt_message(customer, sender, open_block_number, image, t_start, t_expire)
+    msg = get_receipt_message(customer, sender, open_block_number, image, t_start, t_expire, balance_message_hash)
     #print('msg', type(msg), msg)
     return addr_from_sig(receipt_sig, msg)
 

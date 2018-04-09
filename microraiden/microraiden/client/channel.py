@@ -1,7 +1,7 @@
 import logging
 from enum import Enum
 
-from eth_utils import decode_hex, is_same_address
+from eth_utils import decode_hex, is_same_address, encode_hex
 from typing import Callable
 
 from microraiden.client.context import Context
@@ -9,9 +9,12 @@ from microraiden.utils import (
     get_event_blocking,
     create_signed_contract_transaction,
     sign_balance_proof,
+    sign_monitor_balance_proof,
     verify_closing_sig,
-    keccak256
+    keccak256,
+    debug_print
 )
+import random
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +38,12 @@ class Channel:
     ):
         self._balance = 0
         self._balance_sig = None
+        
+        self.rng = random
+        self.rng.seed(123456789)
+        self.nonce = None
+        self.last_nonce = None
+        self.next_nonce = self.rng.getrandbits(256)
 
         self.core = core
         self.sender = sender
@@ -67,12 +76,16 @@ class Channel:
         return self._balance_sig
 
     def sign(self):
-        return sign_balance_proof(
+        #self.last_nonce = self.nonce
+        #self.nonce = self.rng.getrandbits(256)
+        return sign_monitor_balance_proof(
             self.core.private_key,
             self.receiver,
             self.block,
             self.balance,
-            self.core.channel_manager.address
+            self.core.channel_manager.address,
+            123456789
+#            self.next_nonce
         )
 
     def topup(self, deposit):

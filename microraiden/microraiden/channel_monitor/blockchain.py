@@ -190,34 +190,34 @@ class Blockchain(gevent.Greenlet):
                     # TODO: recover
 
 
-            logs = get_logs(
-                self.channel_manager_contract,
-                'DebugInputs',
-                **filters_unconfirmed
-            )
-
-            for log in logs:
-                msg = log['args']['msg']
-                sig = log['args']['sig']
-                
-                print('inputs')
-                print('msg', type(msg), msg)
-                print('sig', type(sig), sig)
-
-            logs = get_logs(
-                self.channel_manager_contract,
-                'DebugVerify',
-                **filters_unconfirmed
-            )
-
-            for log in logs:
-                sender = log['args']['_sender']
-                msg = log['args']['msg']
-                dig = log['args']['sig']
-
-                print('verify')
-                print('msg', type(msg), msg)
-                print('sig', type(sig), sig)
+#            logs = get_logs(
+#                self.channel_manager_contract,
+#                'DebugInputs',
+#                **filters_unconfirmed
+#            )
+#
+#            for log in logs:
+#                msg = log['args']['msg']
+#                sig = log['args']['sig']
+#                
+#                print('inputs')
+#                print('msg', type(msg), msg)
+#                print('sig', type(sig), sig)
+#
+#            logs = get_logs(
+#                self.channel_manager_contract,
+#                'DebugVerify',
+#                **filters_unconfirmed
+#            )
+#
+#            for log in logs:
+#                sender = log['args']['_sender']
+#                msg = log['args']['msg']
+#                dig = log['args']['sig']
+#
+#                print('verify')
+#                print('msg', type(msg), msg)
+#                print('sig', type(sig), sig)
 
             # channel settled event
             logs = get_logs(
@@ -261,6 +261,15 @@ class Blockchain(gevent.Greenlet):
 
             for log in logs:
                 self.log.info('\n\n saw resolve event happen \n\n')
+
+            logs = get_logs(
+                self.channel_monitor_contract,
+                'Withdraw',
+                **filters_unconfirmed
+            )
+
+            for log in logs:
+                self.log.info('detected successful WITHDRAW in monitor contract')
 
 
         # update head hash and number

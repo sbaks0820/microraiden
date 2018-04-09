@@ -104,7 +104,8 @@ def make_channel_monitor(
         web3: Web3,
         cheat: bool = False,
         _reveal_pre_image: bool = True,
-        _redeem_payment: bool = True
+        _redeem_payment: bool = True,
+        _cheat_with_receipt: bool = False
 ) -> ChannelMonitor:
     """
     Args:
@@ -135,6 +136,7 @@ def make_channel_monitor(
             try_to_make_some_money=cheat,
             reveal_pre_image=_reveal_pre_image,
             redeem_payment=_redeem_payment,
+            cheat_with_receipt=_cheat_with_receipt,
         )
     except StateReceiverAddrMismatch as e:
         log.error(

@@ -1,7 +1,7 @@
 import time
 from enum import IntEnum
 from eth_utils import is_address
-
+import random
 
 class ChannelState(IntEnum):
     OPEN = 0
@@ -44,6 +44,11 @@ class Channel(object):
         self.ctime = time.time()  # channel creation time
         self.mtime = self.ctime
         self.confirmed = False
+        self.rng = random
+        self.rng.seed(123456789)
+        self.nonce = None
+        self.last_nonce = None
+        self.next_nonce = self.rng.getrandbits(256)
 
         self.unconfirmed_topups = {}  # txhash to added deposit
 

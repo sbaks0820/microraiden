@@ -96,6 +96,19 @@ def deploy_channel_manager_contract(
 
     return ChannelManager(contract_address)
 
+def deploy_channel_monitor_contract(
+        web3,
+        monitor_address,
+        channel_monitor_abi,
+        channel_monitor_bytecode,
+        token_address
+):
+    ChannelMonitor = web3.eth.contract(abi=channel_monitor_abi, bytecode=channel_monitor_bytecode)
+    txhash = ChannelMonitor.deploy({'from': monitor_address}, args=[])
+    contract_address = web3.eth.getTransactionReceipt(txhash).contractAddress
+    web3.testing.mine(1)
+
+    return ChannelMonitor(contract_address)
 
 @pytest.fixture(scope='session')
 def channel_manager_address(
@@ -117,6 +130,27 @@ def channel_manager_address(
         return contract.address
     else:
         return NETWORK_CFG.CHANNEL_MANAGER_ADDRESS
+
+@pytest.fixture(scope='session')
+def channel_monitor_address(
+        use_tester,
+        web3,
+        monitor_address,
+        channel_monitor_abi,
+        channel_monitor_bytecode,
+        token_address
+):
+    if use_tester:
+        contract = deploy_channel_monitor_contract(
+            web3,
+            monitor_address,
+            channel_monitor_abi,
+            channel_monitor_bytecode,
+            token_address
+        )
+        return contract.address
+    else:
+        return NETWORK_CFG.CHANNEL_MONITOR_ADDRESS
 
 
 @pytest.fixture(scope='session')
@@ -262,3 +296,7 @@ def token_contract(web3: Web3, token_address: str, token_abi):
 @pytest.fixture(scope='session')
 def channel_manager_contract(web3: Web3, channel_manager_address: str, channel_manager_abi):
     return web3.eth.contract(abi=channel_manager_abi, address=channel_manager_address)
+
+@pytest.fixture(scope='session')
+def channel_monitor_contract(web3: Web3, channel_monitor_address: str, channel_monitor_abi):
+    return web3.eth.contract(abi=channel_monitor_abi, address=channel_monitor_address)

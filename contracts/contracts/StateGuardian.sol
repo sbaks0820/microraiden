@@ -54,7 +54,9 @@ contract StateGuardian {
     uint public guardian_deposit;
     address public monitor = msg.sender;
 
-    mapping (address => channel) ID;
+    mapping (address => channel) public ID;
+//    mapping (address => Channel[]) public ID;
+
 
     function setup(uint32 _delta_withdraw, uint32 _delta_settle)
         payable 
@@ -121,9 +123,9 @@ contract StateGuardian {
         return signer; 
     }
 
-    event DebugHash(uint32 indexed _pre_image, bytes32 indexed _image, bytes32 indexed _hash);
-    event DebugSigner(address _signer);
-    event PayoutInfo(uint _payout, uint _deposit);
+    //event DebugHash(uint32 indexed _pre_image, bytes32 indexed _image, bytes32 indexed _hash);
+    //event DebugSigner(address _signer);
+    //event PayoutInfo(uint _payout, uint _deposit);
     function setstate(
         address _sender,
         uint32 _open_block_number,
@@ -151,7 +153,7 @@ contract StateGuardian {
             _customer_sig
         );
 
-        DebugSigner(customer_signer);
+        //DebugSigner(customer_signer);
         require(customer_signer == _customer);
 
         profit += _payout;
@@ -232,6 +234,7 @@ contract StateGuardian {
         uint32 t_start,
         uint32 t_expire,
         bytes32 image,
+        bytes32 balance_message_hash,
         bytes monitor_sig)
         returns(address)
     {
@@ -243,7 +246,8 @@ contract StateGuardian {
                 'uint32 block created',
                 'uint32 start time',
                 'uint32 expire time',
-                'bytes32 image'
+                'bytes32 image',
+                'bytes32 evidence'
             ),
             keccak256(
                 msg.sender,
@@ -251,7 +255,8 @@ contract StateGuardian {
                 open_block_number,
                 t_start,
                 t_expire,
-                image
+                image,
+                balance_message_hash
             )
         );
    
@@ -259,10 +264,11 @@ contract StateGuardian {
         return signer;
     }
 
-    event StealMonitorDeposit(uint192 indexed _monitor_balance, uint192 indexed _closing_balance);
-    event LeaveMonitorDeposit(uint192 indexed _monitor_balance, uint192 indexed _closing_balance);
+//    event StealMonitorDeposit(uint192 indexed _monitor_balance, uint192 indexed _closing_balance);
+//    event LeaveMonitorDeposit(uint192 indexed _monitor_balance, uint192 indexed _closing_balance);
 //    event DebugSigner(address _signer, bytes32 _image);
-    event ClosingInfo(uint192 indexed _closing_balance, uint192 indexed _monitor_balance, uint32 indexed _settle_block);
+//    event ClosingInfo(uint192 indexed _closing_balance, uint192 indexed _monitor_balance, uint32 indexed _settle_block);
+    event RecourseResult(bytes32 indexed _evidence, bytes32 _receipt_hash, bool indexed _cheated);
 
     function recourse(
         address sender,
@@ -270,12 +276,13 @@ contract StateGuardian {
         bytes32 image,
         uint32 t_start,
         uint32 t_expire,
+        bytes32 balance_message_hash,
         bytes monitor_sig,
         uint32 pre_image)
         external
     {        
         require(flag != Flags.CHEATED);
-        //require(keccak256(pre_image) == image);
+        require(keccak256(pre_image) == image);
 
         address signer = extractreceiptsignature(
             msg.sender,
@@ -284,28 +291,35 @@ contract StateGuardian {
             t_start,
             t_expire,
             image,
+            balance_message_hash,
             monitor_sig
         );
 
-        // require(signer == monitor);
+        require(signer == monitor);
 
-        uint192 closing_balance;
-        uint192 monitor_balance;
+//        uint192 closing_balance;
+//        uint192 monitor_balance;
         uint32 block_number;
+        bytes32 evidence;
+        //bool cheated = false;
 
-        (closing_balance, monitor_balance, block_number) = ID[msg.sender].caddr.getClosingInfo(sender, msg.sender, open_block_number);
+//        (closing_balance, monitor_balance, block_number) = ID[msg.sender].caddr.getClosingInfo(sender, msg.sender, open_block_number);
+        (block_number, evidence) = ID[msg.sender].caddr.getClosingInfo(sender, msg.sender, open_block_number);
 
-        ClosingInfo(closing_balance, monitor_balance, block_number);
+
+        //ClosingInfo(closing_balance, monitor_balance, block_number);
 
         if (
             open_block_number <= t_start &&
             block_number < t_expire &&
-            closing_balance > monitor_balance)
+            evidence != balance_message_hash)
+            //closing_balance > monitor_balance)
         {
-            StealMonitorDeposit(monitor_balance, closing_balance);
             flag = Flags.CHEATED;
+            //cheated = true;
+            RecourseResult(evidence, balance_message_hash, true); 
         } else {
-            LeaveMonitorDeposit(monitor_balance, closing_balance);
+            RecourseResult(evidence, balance_message_hash, false);
         }
     } 
 

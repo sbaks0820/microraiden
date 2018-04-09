@@ -9,7 +9,7 @@ from requests import Response
 
 from microraiden.header import HTTPHeaders
 from microraiden.client import Client, Channel
-from microraiden.utils import verify_balance_proof
+from microraiden.utils import verify_balance_proof, verify_monitor_balance_proof
 
 log = logging.getLogger(__name__)
 
@@ -223,12 +223,13 @@ class Session(requests.Session):
         last_balance = int(response.headers.get(HTTPHeaders.SENDER_BALANCE))
 
         verified = balance_sig and is_same_address(
-            verify_balance_proof(
+            verify_monitor_balance_proof(
                 self.channel.receiver,
                 self.channel.block,
                 last_balance,
                 balance_sig,
-                self.client.context.channel_manager.address
+                self.client.context.channel_manager.address,
+                self.channel.nonce
             ),
             self.channel.sender
         )
@@ -265,7 +266,7 @@ class Session(requests.Session):
         price = int(response.headers[HTTPHeaders.PRICE])
         assert price > 0
 
-        log.debug('Preparing payment of price {} to {}.'.format(price, receiver))
+        log.info('Preparing payment of price {} to {}.'.format(price, receiver))
 
         if self.channel is None or self.channel.state != Channel.State.open:
             new_channel = self.client.get_suitable_channel(
@@ -309,6 +310,12 @@ class Session(requests.Session):
 
     def on_success(self, method: str, url: str, response: Response, **kwargs) -> bool:
         log.debug('Resource received.')
+        self.channel.last_nonce = self.channel.nonce
+        self.channel.nonce = self.channel.next_nonce
+        self.channel.next_nonce = self.channel.rng.getrandbits(256)
+
+        log.info('last nonce {} \n\t nonce {} \n\t next nonce {}'.format(self.channel.last_nonce, self.channel.nonce, self.channel.next_nonce))
+
         cost = response.headers.get(HTTPHeaders.COST)
         if cost is not None:
             log.debug('Final cost was {}.'.format(cost))

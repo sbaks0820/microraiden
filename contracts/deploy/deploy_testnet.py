@@ -6,6 +6,7 @@ from populus import Project
 from eth_utils import (
     is_address,
     to_checksum_address,
+    encode_hex
 )
 from utils.utils import (
     check_succesful_tx,
@@ -17,6 +18,8 @@ from web3.middleware.pythonic import (
     pythonic_middleware,
     to_hexbytes,
 )
+
+import json
 
 @click.command()
 @click.option(
@@ -55,7 +58,12 @@ from web3.middleware.pythonic import (
 )
 @click.option(
     '--token-address',
+    default=None,
     help='Already deployed token address.'
+)
+@click.option(
+    '--output-json',
+    help='Testing flag to output config file.'
 )
 def main(**kwargs):
     project = Project()
@@ -68,6 +76,7 @@ def main(**kwargs):
     token_decimals = kwargs['token_decimals']
     token_symbol = kwargs['token_symbol']
     token_address = kwargs['token_address']
+    output_json = kwargs['output_json']
     supply *= 10**(token_decimals)
     txn_wait = 250
 
@@ -114,6 +123,7 @@ def main(**kwargs):
         assert token_address and is_address(token_address)
         token_address = to_checksum_address(token_address)
         print(token_name, 'address is', token_address)
+        print(token_name, 'tx is', encode_hex(txhash))
 
         microraiden_contract = chain.provider.get_contract_factory('RaidenMicroTransferChannels')
         txhash = microraiden_contract.deploy(
@@ -123,6 +133,7 @@ def main(**kwargs):
         receipt = check_succesful_tx(chain.web3, txhash, txn_wait)
         microraiden_address = receipt['contractAddress']
 
+        print('RaidenMicroTransferChannels txid is', encode_hex(txhash))
         print('RaidenMicroTransferChannels address is', microraiden_address)
 
         owner = web3.eth.accounts[1]
@@ -139,7 +150,16 @@ def main(**kwargs):
         receipt = check_succesful_tx(chain.web3, txhash, txn_wait)
         guardian_address = receipt['contractAddress']
 
+        print('StateGuardian tx is', encode_hex(txhash))
         print('StateGuardian address is', guardian_address)
+
+        if output_json:
+            d = json.load(open(output_json))
+            d['token'] = token_address
+            d['manager'] = microraiden_address
+            d['monitor'] = guardian_address
+
+            json.dump(d, open(output_json, 'w'))
 
 if __name__ == '__main__':
     main()
