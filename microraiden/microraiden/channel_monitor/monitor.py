@@ -98,7 +98,8 @@ class MonitorJob(object):
         channel_manager: Contract,
         open_block_number: int,
         last_signature = None,
-        last_hash = None
+        last_hash = None,
+        last_customer_sig = None
         #deposit: int,
     ):
         assert channel_manager
@@ -109,6 +110,7 @@ class MonitorJob(object):
         self.last_signature = last_signature
         self.last_hash = last_hash
         self.all_signatures = []
+        self.all_customer_signatures = []
         self.all_hashes = []
 
         self.interfered = False
@@ -285,13 +287,16 @@ class ChannelMonitor(gevent.Greenlet):
 
         assert job.last_hash == job.all_hashes[-1]
         assert job.last_signature == job.all_signatures[-1]
+        assert job.last_customer_sig == job.all_customer_signatures[-1]
 
         if self.try_to_make_some_money and len(job.all_hashes) > 1:
             evidence_hash = job.all_hashes[-2]
             evidence_sig = job.all_signatures[-2]
+            evidence_customer_sig = job.all_customer_signatures[-2]
         else:
             evidence_hash = job.last_hash
             evidence_sig = job.last_signature
+            evidence_customer_sig = job.last_customer_sig
         
         #print('\nevidence')
         #debug_print([evidence_hash, decode_hex(evidence_sig), evidence_sig])
@@ -305,7 +310,8 @@ class ChannelMonitor(gevent.Greenlet):
                 self.state.receiver,
                 open_block_number,
                 evidence_hash,
-                decode_hex(evidence_sig)
+                decode_hex(evidence_sig),
+                decode_hex(evidence_customer_sig)
             ]
         )
 
@@ -408,8 +414,10 @@ class ChannelMonitor(gevent.Greenlet):
     """
     received a new BLANCE SIG from customer
     """
-    def on_new_balance_sig(self, command: str, customer: str,sender: str, open_block_number: int, balance_message_hash: bytes, signature: str):
-    #def on_new_balance_sig(self, command: str, customer: str,sender: str, open_block_number: int, round_number: int, balance_message_hash: bytes, signature: str):
+    """old function"""
+#    def on_new_balance_sig(self, command: str, customer: str,sender: str, open_block_number: int, balance_message_hash: bytes, signature: str):
+    """accepted customer sig"""
+    def on_new_balance_sig(self, command: str, customer: str,sender: str, open_block_number: int, balance_message_hash: bytes, signature: str, customer_sig: str):
         #print('\nbalance sig')
         #debug_print([customer, sender, open_block_number, balance_message_hash, signature])
         customer = to_checksum_address(customer)
@@ -437,13 +445,23 @@ class ChannelMonitor(gevent.Greenlet):
                 self.log.info('balance message not signed by correct sender')
                 return BALANCE_SIG_NOT_ACCEPTED 
 
+            customer_sig_addr = addr_from_sig(decode_hex(customer_sig), balance_message_hash)
+            if not is_same_address(
+                    customer_sig_addr,
+                    customer
+            ):
+                self.log.info('customers balance sig is wrong. address: %s', customer_sig_addr)
+                return BALANCE_SIG_NOT_ACCEPTED
+
             receipt = self.create_signed_receipt(customer, sender, open_block_number, balance_message_hash, signature)
             #receipt = self.create_signed_receipt(customer, sender, open_block_number, balance_message_hash, round_number, signature)
             #self.customer_fair_exchange(customer, sender, open_block_number, balance_message_hash, signature)
             self.jobs[customer,sender,open_block_number].last_signature = signature
             self.jobs[customer,sender,open_block_number].last_hash = balance_message_hash
+            self.jobs[customer,sender,open_block_number].last_customer_sig = customer_sig
 
             self.jobs[customer,sender,open_block_number].all_signatures.append(signature)
+            self.jobs[customer,sender,open_block_number].all_customer_signatures.append(customer_sig)
             self.jobs[customer,sender,open_block_number].all_hashes.append(balance_message_hash)
 
 

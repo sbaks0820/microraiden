@@ -777,9 +777,6 @@ class ChannelManager(gevent.Greenlet):
             raise InvalidBalanceProof('Recovered signer does not match the sender')
         self.log.info('ADDRESS RESOLVED FOR BALANCE SIG: %s', sig_addr)
 
-#        self.c.last_nonce = self.c.nonce
-#        self.c.nonce = self.c.next_nonce
-#        self.c.next_nonce = self.c.rng.getrandbits(256)
         return c
 
     def send_proof_to_monitor(self, sender: str, receiver: str, open_block_number: int, balance: int, signature: bytes, nonce: int, round_number: int):
@@ -792,9 +789,16 @@ class ChannelManager(gevent.Greenlet):
         #balance_message_hash = get_state_hash(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789)
         #self.log.info('Server (state_hash %s, round_number %d)', balance_message_hash, round_number)
 
+    
+        """customer sign balance proof"""
+        customer_sig = sign_monitor_balance_proof(self.private_key, self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789)
+
         #print('\nbalance sig')
         #debug_print([sender, receiver, open_block_number, balance_message_hash, signature])
-        self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, balance_message_hash, signature])
+        """old send monitor sig"""
+        #self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, balance_message_hash, signature])
+        """send monitor customer sig"""
+        self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, balance_message_hash, signature, encode_hex(customer_sig)])
         #self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, round_number, balance_message_hash, signature])
 
 #        self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, signature])

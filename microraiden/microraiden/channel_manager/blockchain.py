@@ -449,6 +449,15 @@ class Blockchain(gevent.Greenlet):
                 )
                 self.cm.event_set_state(customer, sender, open_block_number, pre_image)
 
+        logs = get_logs(
+            self.channel_manager_contract,
+            'DebugVerify',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            signer = to_checksum_address(log['args']['_sender'])
+            self.log.info('Signer of customer evidence: %s', signer)
 
         # See which close requests are ready to be responded to
         # and process them normally.

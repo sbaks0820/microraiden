@@ -379,18 +379,22 @@ contract RaidenMicroTransferChannels {
     }
 
 
-    //event DebugVerify(address indexed _sender, bytes32 indexed msg, bytes indexed sig);
+    event DebugVerify(address indexed _sender);
     //event DebugInputs(bytes32 indexed msg, bytes indexed sig);
     
     function monitorEvidence(
         address receiver,
         uint32 open_block_number,
         bytes32 balance_msg_hash,
-        bytes balance_msg_sig)
+        bytes balance_msg_sig,
+        bytes receiver_msg_sig)
         external
         view
     {
         //DebugInputs(balance_msg_hash, balance_msg_sig);
+        address customer_signer = ECVerify.ecverify(balance_msg_hash, receiver_msg_sig);
+        require(customer_signer == receiver);
+
         address s = ECVerify.ecverify(balance_msg_hash, balance_msg_sig);
 
         bytes32 key = getKey(s, receiver, open_block_number);
