@@ -49,6 +49,7 @@ class Channel(object):
         self.nonce = None
         self.last_nonce = None
         self.next_nonce = self.rng.getrandbits(256)
+        self.round_number = 0
 
         self.unconfirmed_topups = {}  # txhash to added deposit
 

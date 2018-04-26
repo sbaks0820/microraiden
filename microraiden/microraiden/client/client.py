@@ -150,7 +150,7 @@ class Client:
             return None
 
         current_block = self.context.web3.eth.blockNumber
-        log.info('Creating channel to {} with an initial deposit of {} @{}'.format(
+        log.info('Creating channel to {} with an initial deposit of {} @{}\n'.format(
             receiver_address, deposit, current_block
         ))
 

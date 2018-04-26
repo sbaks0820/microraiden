@@ -7,11 +7,11 @@ from ethereum.exceptions import InsufficientBalance
 from web3 import Web3
 from web3.contract import Contract
 from web3.exceptions import BadFunctionCallOutput
-from eth_utils import is_same_address, to_checksum_address
+from eth_utils import is_same_address, to_checksum_address, encode_hex
 
 from microraiden.config import NETWORK_CFG
 from microraiden.constants import PROXY_BALANCE_LIMIT
-from microraiden.utils import get_logs
+from microraiden.utils import get_logs, bcolors
 
 
 class Blockchain(gevent.Greenlet):
@@ -258,12 +258,21 @@ class Blockchain(gevent.Greenlet):
                 continue
             balance = log['args']['_balance']
             try:
-                self.log.info('params to get info: %s, %s, %d', sender, self.cm.state.receiver, open_block_number)
+                #self.log.info('params to get info: %s, %s, %d', sender, self.cm.state.receiver, open_block_number)
                 mtimeout,timeout = self.channel_manager_contract.call().getChannelInfo(
                     sender,
                     self.cm.state.receiver,
                     open_block_number
                     )[2:4]
+                
+                print(bcolors.OKGREEN +
+                    'Channel close request:' + 
+                    '\n\tsender %s' % sender +
+                    '\n\tmonitor timeout %d' % mtimeout +
+                    '\n\tsettle timeout %d' % timeout +
+                    bcolors.ENDC
+                )
+
             except BadFunctionCallOutput:
                 self.log.warning(
                     'received ChannelCloseRequested event for a channel that doesn\'t '
@@ -298,89 +307,39 @@ class Blockchain(gevent.Greenlet):
             sender = to_checksum_address(sender)
             open_block_number = log['args']['open_block_number']
             if (sender, open_block_number) not in self.cm.channels:
-                self.log.info("monitor interfered in channel that wasn't outsourced (sender %s open_block_number %s, balance_msg_sig %s)", 
+                self.log.debug("monitor interfered in channel that wasn't outsourced (sender %s open_block_number %s, balance_msg_sig %s)", 
                     sender,
                     open_block_number,
                     balance_msg_sig)
             
             self.cm.event_monitor_interference(sender, open_block_number)
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'CustomerDeposit',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            sender = to_checksum_address(log['args']['_sender_address'])
+            deposit = log['args']['_sender_deposit']
+
+            if sender == self.cm.receiver:
+                self.cm.event_deposit_unconfirmed(sender, deposit)
+
+        logs = get_logs(
+            self.channel_monitor_contract,
+            'CustomerDeposit',
+            **filters_confirmed
+        )
+
+        for log in logs:
+            sender = to_checksum_address(log['args']['_sender_address'])
+            deposit = log['args']['_sender_deposit']
+
+            if sender == self.cm.receiver:
+                self.cm.event_deposit(sender, deposit)
        
-#        logs = get_logs(
-#            self.channel_monitor_contract,
-#            'Dispute',
-#            **filters_confirmed
-#        )
-#
-#        for log in logs:
-#            self.log.info('DECETED the dispute successfully go throughi (customer %s, settle timeout %d)',
-#                log['args']['_sender_address'],
-#                log['args']['_channel_settle']
-#            )
-#
-#        logs = get_logs(
-#            self.channel_manager_contract,
-#            'RevealSigner',
-#            **filters_unconfirmed
-#        )
-#
-#        for log in logs:
-#            self.log.info('DETECTED REVEAL SIGNER EVENT')
-#
-#        logs = get_logs(
-#            self.channel_manager_contract,
-#            'RevealCorrectBalance',
-#            **filters_unconfirmed
-#        )
-#
-#        for log in logs:
-#            self.log.info('DETECTED RevealCorrectBalance')
-#
-#        logs = get_logs(
-#            self.channel_manager_contract,
-#            'RevealIncorrectBalance',
-#            **filters_unconfirmed
-#        )
-#
-#        for log in logs:
-#            self.log.info('DETECTED RevealIncorrectBalance')
-
-
-#        logs = get_logs(
-#            self.channel_monitor_contract,
-#            'StealMonitorDeposit',
-#            **filters_confirmed
-#        )
-#
-#        for log in logs:
-#            #self.log.info('STEAL THE MONITORS DEPOSIT FOR NOT RESPONDING CORRECTLY(%d, %d)', log['args']['_monitor_balance'], log['args']['_closing_balance'])
-#            self.log.info('STEAL THE MONITORS DEPOSIT')
-#
-#        logs = get_logs(
-#            self.channel_monitor_contract,
-#            'LeaveMonitorDeposit',
-#            **filters_confirmed
-#        )
-#
-#        for log in logs:
-#            #self.log.info('LEAVE THE MONITORS DEPOSIT (%d, %d)', log['args']['_monitor_balance'], log['args']['_closing_balance'])
-#            self.log.info('LEAVE THE MONITORS DEPOSIT')
-#
-#        logs = get_logs(
-#            self.channel_monitor_contract,
-#            'ClosingInfo',
-#            **filters_unconfirmed
-#        )
-#
-#        for log in logs:
-#            closing_balance = log['args']['_closing_balance']
-#            monitor_balance = log['args']['_monitor_balance']
-#            settle_block = log['args']['_settle_block']
-#            self.log.info('\n Channel closing info (closing balance %d, monitor balance %d, settle block %d)',
-#                closing_balance,
-#                monitor_balance,
-#                settle_block
-#            )
-
         logs = get_logs(
             self.channel_monitor_contract,
             'RecourseResult',
@@ -399,6 +358,18 @@ class Blockchain(gevent.Greenlet):
                 receipt_hash,
                 cheated
             )
+            print(bcolors.OKBLUE,
+                    'Recourse result detected',
+                    '\n\tCheated: %r' % cheated,
+                    '\n\tnew balance: %s' % int(self.web3.eth.getBalance(self.cm.receiver)),
+                    bcolors.ENDC
+            )
+
+            print(bcolors.OKGREEN +
+                    '\n\tServer balance: %d' % int(self.web3.eth.getBalance(self.cm.receiver))
+            )
+               
+
 
         logs = get_logs(
             self.channel_monitor_contract,
@@ -447,39 +418,14 @@ class Blockchain(gevent.Greenlet):
         for log in logs:
             customer = to_checksum_address(log['args']['_sender_address'])
             self.log.info('successfully resolved channel (customer %s)', customer)
-
-#        logs = get_logs(
-#            self.channel_monitor_contract,
-#            'DebugHash',
-#            **filters_unconfirmed
-#        )
-#
-#        for log in logs:
-#            pre_image = log['args']['_pre_image']
-#            image = log['args']['_image']
-#
-#            self.log.info('\nDEBUG HASH (pre image %d, hash %s)', pre_image, image)
-#
-#        logs = get_logs(
-#            self.channel_monitor_contract,
-#            'DebugSigner',
-#            **filters_unconfirmed
-#        )
-#
-#        for log in logs:
-#            signer = to_checksum_address(log['args']['_signer'])
-#            self.log.info('\nDEBUG SIGNER (signer %s)', signer)
-
-#        logs = get_logs(
-#            self.channel_monitor_contract,
-#            'PayoutInfo',
-#            **filters_unconfirmed
-#        )
-#
-#        for log in logs:
-#            payout = log['args']['_payout']
-#            deposit = log['args']['_deposit']
-#            self.log.info('\nPAYOUT INFO (payout %d, deposit %d)\n', payout, deposit)
+            print(bcolors.OKGREEN +
+                    'Channel successfully resolved....' +
+                    bcolors.ENDC
+            )
+            print(bcolors.OKGREEN +
+                    '\n\tServer balance: %d' % (self.web3.eth.getBalance(self.cm.receiver))
+            )
+               
 
         logs = get_logs(
             self.channel_monitor_contract,
@@ -512,16 +458,10 @@ class Blockchain(gevent.Greenlet):
                 try:
                     #print(self.cm.monitor_channels)
                     sender,open_block_number = self.wait_to_dispute[mtimeout][0], self.wait_to_dispute[mtimeout][1]
-#                    if not self.cm.monitor_channels[sender, open_block_number]:
-                    if (sender, open_block_number) not in self.cm.signed_receipts:
-                        continue 
-                    if not self.cm.signed_receipts[sender, open_block_number].pre_image:
-                        self.log.info("No EXPECTATION of monitor event responding due to no fair exchange")
-                    else:
-                        self.log.info('Processing close request at block %s, mtimeout %s',
-                            self.cm.state.confirmed_head_number, mtimeout)
-#                        self.cm.reveal_monitor_submission(*self.wait_to_dispute[mtimeout])
-                        self.cm.event_channel_close_requested(*self.wait_to_dispute[mtimeout])
+                    self.log.info('Processing close request at block %s, mtimeout %s',
+                        self.cm.state.confirmed_head_number, mtimeout)
+#                    self.cm.reveal_monitor_submission(*self.wait_to_dispute[mtimeout])
+                    self.cm.event_channel_close_requested(*self.wait_to_dispute[mtimeout])
                 except InsufficientBalance:
                     self.log.fatal('Insufficient ETH balance of the receiver. '
                                     "Can't close the channel. "

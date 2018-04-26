@@ -119,7 +119,6 @@ def sign_transaction(tx: Transaction, privkey: str, network_id: int):
     tx.r = int.from_bytes(r, byteorder='big')
     tx.s = int.from_bytes(s, byteorder='big')
 
-
 def eth_message_hash(msg: str) -> bytes:
     msg = '\x19Ethereum Signed Message:\n' + str(len(msg)) + msg
     return keccak256(msg)
@@ -140,7 +139,6 @@ def eth_sign_typed_data_message(typed_data: List[TypedData]) -> bytes:
     schema, data = [list(zipped) for zipped in zip(*typed_data)]
 
     return keccak256(keccak256(*schema), keccak256(*data))
-
 
 def eth_sign_typed_data(privkey: str, typed_data: List[TypedData]) -> bytes:
     msg = eth_sign_typed_data_message(typed_data)
@@ -168,6 +166,74 @@ def get_monitor_balance_message(
         ('address', 'contract', contract_address),
         ('uint32', 'nonce', (nonce, 32)),
     ])
+
+## ROUND NUMBER  ##################################################
+def eth_sign_typed_data_message2(typed_data: List[TypedData], round_number: int) -> bytes:
+    typed_data = [('{} {}'.format(type_, name), data) for type_, name, data in typed_data]
+    schema, data = [list(zipped) for zipped in zip(*typed_data)]
+
+    return keccak256(keccak256(*schema), keccak256(*data))
+
+## ROUND NUMBER ####################################################
+def eth_sign_typed_data_message3(typed_data: List[TypedData]) -> bytes:
+    typed_data = [('{} {}'.format(type_, name), data) for type_, name, data in typed_data]
+    schema, data = [list(zipped) for zipped in zip(*typed_data)]
+
+    return pack(keccak256(*schema), keccak256(*data))
+
+## ROUND NUMBER #####################################################
+def monitor_balance_message_from_state(state_hash: bytes, round_number: int) -> bytes:
+    return keccak256(state_hash, round_number)
+
+def get_state_hash(
+        receiver: str, open_block_number: int, balance: int, contract_address: str, nonce: int) -> bytes:
+
+    state_hash = eth_sign_typed_data_message3([
+        ('string', 'message_id', 'Sender balance proof signature'),
+        ('address', 'receiver', receiver),
+        ('uint32', 'block_created', (open_block_number, 32)),
+        ('uint192', 'balance', (balance, 192)),
+        ('address', 'contract', contract_address),
+        ('uint32', 'nonce', (nonce, 32)),
+    ])
+
+    return state_hash
+
+## ROUND NUMBER #######################################################
+def get_monitor_balance_message2(
+        receiver: str, open_block_number: int, balance: int, contract_address: str, nonce: int, round_number: int
+) -> bytes:
+    #state_hash = eth_sign_typed_data_message2([
+    #    ('string', 'message_id', 'Sender balance proof signature'),
+    #    ('address', 'receiver', receiver),
+    #    ('uint32', 'block_created', (open_block_number, 32)),
+    #    ('uint192', 'balance', (balance, 192)),
+    #    ('address', 'contract', contract_address),
+    #    ('uint32', 'nonce', (nonce, 32)),
+    #])
+    state_hash = get_state_hash(receiver, open_block_number, balance, contract_address, nonce)
+    return monitor_balance_message_from_state(state_hash, round_number)
+
+## ROUND NUMBER ###########################################
+def sign_monitor_balance_proof2(
+        privkey: str, receiver: str, open_block_number: int, balance: int, contract_address: str, nonce: int, round_number: int
+) -> bytes:
+    msg = get_monitor_balance_message2(receiver, open_block_number, balance, contract_address, nonce, round_number)
+    return sign(privkey, msg, v=27)
+
+## ROUND NUMBER #####################################33
+def verify_monitor_balance_proof2(
+        receiver: str,
+        open_block_number: int,
+        balance: int,
+        balance_sig: bytes,
+        contract_address: str,
+        nonce: int,
+        round_number: int
+) -> str:
+    msg = get_monitor_balance_message2(receiver, open_block_number, balance, contract_address, nonce, round_number)
+    #print('msg', type(msg), msg)
+    return addr_from_sig(balance_sig, msg)
 
 def get_balance_message(
         receiver: str, open_block_number: int, balance: int, contract_address: str
@@ -204,10 +270,30 @@ def get_receipt_message(
         ('bytes32', 'evidence', balance_message_hash)
     ])
 
+#################################################3
+def get_receipt_message2(
+        customer: str, sender: str, open_block_number: int, image: bytes, t_start: int, t_expire: int, round_number: int, balance_message_hash: bytes) -> bytes:
+    return eth_sign_typed_data_message([
+        ('address', 'customer', customer),
+        ('address', 'sender', sender),
+        ('uint32', 'block created', (open_block_number, 32)),
+        ('uint32', 'start time', (t_start, 32)),
+        ('uint32', 'expire time', (t_expire, 32)),
+        ('bytes32', 'image', image),
+        ('uint32', 'round_number', round_number),
+        ('bytes32', 'evidence', balance_message_hash)
+    ])
+
 def sign_receipt(
         privkey: str, customer: str, sender: str, open_block_number: int, image: bytes, t_start: int, t_expire: int, balance_message_hash: bytes) -> bytes:
     msg = get_receipt_message(customer, sender, open_block_number, image, t_start, t_expire, balance_message_hash)
     #print('msg', type(msg), msg)
+    return sign(privkey, msg, v=27)
+
+## ROUND NUMBER ##################################################
+def sign_receipt2(
+        privkey: str, customer: str, sender: str, open_block_number: int, image: bytes, t_start: int, t_expire: int, round_number: int, balance_message_hash: bytes) -> bytes:
+    msg = get_receipt_message2(customer, sender, open_block_number, image, t_start, t_expire, round_number, balance_message_hash)
     return sign(privkey, msg, v=27)
 
 def verify_balance_proof(
@@ -244,6 +330,22 @@ def verify_receipt(
         receipt_sig: bytes
 ) -> str:
     msg = get_receipt_message(customer, sender, open_block_number, image, t_start, t_expire, balance_message_hash)
+    #print('msg', type(msg), msg)
+    return addr_from_sig(receipt_sig, msg)
+
+################################################################
+def verify_receipt2(
+        customer: str,
+        sender: str,
+        open_block_number: int,
+        image: bytes,
+        t_start: int,
+        t_expire: int,
+        round_number: int,
+        balance_message_hash: bytes,
+        receipt_sig: bytes
+) -> str:
+    msg = get_receipt_message2(customer, sender, open_block_number, image, t_start, t_expire, round_number, balance_message_hash)
     #print('msg', type(msg), msg)
     return addr_from_sig(receipt_sig, msg)
 

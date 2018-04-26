@@ -48,6 +48,7 @@ CREATE TABLE `channels` (
     `ctime`             INTEGER         NOT NULL,
     `state`             INTEGER         NOT NULL,
     `confirmed`         BOOL            NOT NULL,
+    'round_number'      INTEGER         NOT NULL,
     PRIMARY KEY (`sender`, `open_block_number`)
 );
 CREATE TABLE `topups` (
@@ -87,6 +88,7 @@ UPDATE_SYNCSTATE_SQL = {
 
 ADD_CHANNEL_SQL = """
 INSERT OR REPLACE INTO `channels` VALUES (
+    ?,
     ?,
     ?,
     ?,
@@ -295,6 +297,7 @@ class ChannelManagerState(object):
         channel.ctime = result['ctime']
         channel.unconfirmed_topups = self.get_unconfirmed_topups(result['rowid'])
         channel.confirmed = result['confirmed']
+        channel.round_number = result['round_number']
         return channel
 
     def get_channel_rowid(self, sender: str, open_block_number: int):
@@ -349,7 +352,8 @@ class ChannelManagerState(object):
             channel.mtime,
             channel.ctime,
             channel.state.value,
-            channel.confirmed
+            channel.confirmed,
+            channel.round_number
         ]
         self.conn.execute(ADD_CHANNEL_SQL, params)
         rowid = self.get_channel_rowid(channel.sender, channel.open_block_number)

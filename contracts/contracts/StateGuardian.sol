@@ -45,7 +45,7 @@ contract StateGuardian {
         RaidenMicroTransferChannels caddr;
     }
    
-    Flags flag;
+    Flags public flag;
     uint public profit;
     uint32 public delta_settle;
     uint32 public delta_withdraw;
@@ -57,6 +57,16 @@ contract StateGuardian {
     mapping (address => channel) public ID;
 //    mapping (address => Channel[]) public ID;
 
+    function StateGuardian(uint32 _delta_withdraw, uint32 _delta_settle)
+        public
+        payable
+    {
+        guardian_deposit = msg.value;
+        delta_settle = _delta_settle;
+        delta_withdraw = _delta_withdraw;
+        t_withdraw = 0;
+        flag = Flags.OK;
+    }
 
     function setup(uint32 _delta_withdraw, uint32 _delta_settle)
         payable 
@@ -268,6 +278,7 @@ contract StateGuardian {
 //    event LeaveMonitorDeposit(uint192 indexed _monitor_balance, uint192 indexed _closing_balance);
 //    event DebugSigner(address _signer, bytes32 _image);
 //    event ClosingInfo(uint192 indexed _closing_balance, uint192 indexed _monitor_balance, uint32 indexed _settle_block);
+    //event DebugHash(bytes32 indexed _image, bytes32 indexed _hash);
     event RecourseResult(bytes32 indexed _evidence, bytes32 _receipt_hash, bool indexed _cheated);
 
     function recourse(
@@ -283,6 +294,7 @@ contract StateGuardian {
     {        
         require(flag != Flags.CHEATED);
         require(keccak256(pre_image) == image);
+//        DebugHash(image, keccak256(pre_image));
 
         address signer = extractreceiptsignature(
             msg.sender,

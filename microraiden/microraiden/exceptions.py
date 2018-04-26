@@ -69,3 +69,11 @@ class MonitorRefusedOutsource(MicroRaidenException):
 class NoDepositDetected(MicroRaidenException):
     """Monitor didn't see a deposit in his contract."""
     pass
+
+class NoMonitorDeposit(MicroRaidenException):
+    """No deposit into monitor contract yet."""
+    pass
+
+class UnconfirmedMonitorDeposit(MicroRaidenException):
+    """Monitor deposit transaction unconfirmed."""
+    pass

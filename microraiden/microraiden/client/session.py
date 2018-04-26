@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 from typing import Callable, Tuple, Union
 
@@ -9,10 +10,9 @@ from requests import Response
 
 from microraiden.header import HTTPHeaders
 from microraiden.client import Client, Channel
-from microraiden.utils import verify_balance_proof, verify_monitor_balance_proof
+from microraiden.utils import verify_balance_proof, verify_monitor_balance_proof, bcolors
 
 log = logging.getLogger(__name__)
-
 
 class Session(requests.Session):
     def __init__(
@@ -266,7 +266,8 @@ class Session(requests.Session):
         price = int(response.headers[HTTPHeaders.PRICE])
         assert price > 0
 
-        log.info('Preparing payment of price {} to {}.'.format(price, receiver))
+        log.info('Preparing payment of price {} to {}.\n'.format(price, receiver))
+        print(bcolors.BOLD + 'preparing payment of price {} to {}.'.format(price, receiver) + bcolors.ENDC)
 
         if self.channel is None or self.channel.state != Channel.State.open:
             new_channel = self.client.get_suitable_channel(
@@ -288,6 +289,7 @@ class Session(requests.Session):
             log.error("No channel could be created or sufficiently topped up.")
             return False
 
+        print(bcolors.BOLD + " createing transfer of amount {}".format(price) + bcolors.ENDC)
         balance_sig = self.channel.create_transfer(price)
         log.debug(
             'Sending new balance proof. New channel balance: {}/{}'
@@ -313,8 +315,10 @@ class Session(requests.Session):
         self.channel.last_nonce = self.channel.nonce
         self.channel.nonce = self.channel.next_nonce
         self.channel.next_nonce = self.channel.rng.getrandbits(256)
+        #self.channel.round_number += 1
+        print(bcolors.BOLD + 'round number is now %d' % self.channel.round_number + bcolors.ENDC)
 
-        log.info('last nonce {} \n\t nonce {} \n\t next nonce {}'.format(self.channel.last_nonce, self.channel.nonce, self.channel.next_nonce))
+        log.debug('last nonce {} \n\t nonce {} \n\t next nonce {}'.format(self.channel.last_nonce, self.channel.nonce, self.channel.next_nonce))
 
         cost = response.headers.get(HTTPHeaders.COST)
         if cost is not None:

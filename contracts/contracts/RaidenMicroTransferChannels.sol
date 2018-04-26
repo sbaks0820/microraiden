@@ -763,36 +763,38 @@ contract RaidenMicroTransferChannels {
     //event RevealCorrectBalance();
     //event RevealIncorrectBalance();
 
-//    function revealMonitorEvidence(
-//        address _sender_address,
-//        address _receiver_address,
-//        uint32 _open_block_number,
-//        uint192 _balance)
-//        external
-//    {
-//
-//        bytes32 key = getKey(_sender_address, msg.sender, _open_block_number);
-//      
-//        address signer = extractBalanceProofSignature(
-//            msg.sender,
-//            _open_block_number,
-//            _balance,
-//            closing_requests[key].evidence_sig
-//        );
-//
-//        require(signer == _sender_address);
-//
-//        closing_requests[key].monitor_balance = _balance;
-//
-//        //RevealSigner(signer);
-//
-//        //if (signer == _sender_address) {
-//        //    closing_requests[key].monitor_balance = _balance;
-//        //    RevealCorrectBalance();
-//        //} else {
-//        //    RevealIncorrectBalance();
-//        //}
-//    }
+    function revealMonitorEvidence(
+        address _sender_address,
+        address _receiver_address,
+        uint32 _open_block_number,
+        uint192 _balance,
+        uint32 _nonce)
+        external
+    {
+
+        bytes32 key = getKey(_sender_address, msg.sender, _open_block_number);
+      
+        address signer = extractBalanceProofSignature(
+            msg.sender,
+            _open_block_number,
+            _balance,
+            closing_requests[key].evidence_sig,
+            _nonce
+        );
+
+        require(signer == _sender_address);
+
+        closing_requests[key].monitor_balance = _balance;
+
+        //RevealSigner(signer);
+
+        //if (signer == _sender_address) {
+        //    closing_requests[key].monitor_balance = _balance;
+        //    RevealCorrectBalance();
+        //} else {
+        //    RevealIncorrectBalance();
+        //}
+    }
 
 
     /*

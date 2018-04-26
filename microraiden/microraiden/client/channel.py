@@ -10,11 +10,14 @@ from microraiden.utils import (
     create_signed_contract_transaction,
     sign_balance_proof,
     sign_monitor_balance_proof,
+    sign_monitor_balance_proof2,
     verify_closing_sig,
     keccak256,
-    debug_print
+    debug_print,
+    bcolors
 )
 import random
+import time
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +44,7 @@ class Channel:
         
         self.rng = random
         self.rng.seed(123456789)
-        self.nonce = None
+        self.nonce = 123456789
         self.last_nonce = None
         self.next_nonce = self.rng.getrandbits(256)
 
@@ -50,6 +53,7 @@ class Channel:
         self.receiver = receiver
         self.deposit = deposit
         self.block = block
+        self.round_number = 0
         self.update_balance(balance)
         self.state = state
         self.on_settle = on_settle
@@ -57,7 +61,7 @@ class Channel:
         assert self.block is not None
         assert self._balance_sig
 
-        log.info('Type of balance_sig: %s', str(type(self._balance_sig)))
+        #log.info('Type of balance_sig: %s', str(type(self._balance_sig)))
 
     @property
     def balance(self):
@@ -78,15 +82,18 @@ class Channel:
     def sign(self):
         #self.last_nonce = self.nonce
         #self.nonce = self.rng.getrandbits(256)
-        return sign_monitor_balance_proof(
+        print(bcolors.BOLD + 'Signing balance for round {}'.format(self.round_number + 1) + bcolors.ENDC)
+        sig = sign_monitor_balance_proof(#2(
             self.core.private_key,
             self.receiver,
             self.block,
             self.balance,
             self.core.channel_manager.address,
-            123456789
-#            self.next_nonce
+            123456789,
+#            self.round_number + 1
         )
+        debug_print(['\nverify proof', self.receiver, self.block, self.balance, encode_hex(sig), self.core.channel_manager.address, 123456789, self.round_number+1])
+        return sig
 
     def topup(self, deposit):
         """
@@ -194,6 +201,29 @@ class Channel:
             log.error('No event received.')
             return None
 
+        mtimeout, timeout = self.core.channel_manager.call().getChannelInfo(
+            self.sender,
+            self.receiver,
+            self.block
+        )[2:4]
+
+        # wait for channel to settle
+        while True:
+            current_block = self.core.web3.eth.blockNumber
+            wait_remaining = timeout - current_block
+            if wait_remaining > 0:
+                log.warning('{} more blocks until this channel can be settled. Aborting.'.format(
+                    wait_remaining
+                ))
+            else:
+                log.warning('Done waiting for settlement period')
+                break
+            time.sleep(10)
+
+        # Channel settlement deadline has passed, check for events
+        
+
+
     def close_cooperatively(self, closing_sig: bytes):
         """
         Attempts to close the channel immediately by providing a hash of the channel's balance
@@ -265,12 +295,18 @@ class Channel:
             self.receiver, self.block
         ))
 
-        _, _, settle_block, _, _ = self.core.channel_manager.call().getChannelInfo(
-            self.sender, self.receiver, self.block
-        )
+#        _, _, settle_block, _, _ = self.core.channel_manager.call().getChannelInfo(
+#            self.sender, self.receiver, self.block
+#        )
+
+        mtimeout, timeout = self.core.channel_manager.call().getChannelInfo(
+            self.sender,
+            self.receiver,
+            self.block
+        )[2:4]
 
         current_block = self.core.web3.eth.blockNumber
-        wait_remaining = settle_block - current_block
+        wait_remaining = timeout - current_block
         if wait_remaining > 0:
             log.warning('{} more blocks until this channel can be settled. Aborting.'.format(
                 wait_remaining
@@ -330,6 +366,7 @@ class Channel:
             log.error('Channel must be open to create a transfer.')
             return None
 
+        print('Update channel balance {}, {}'.format(value, self.balance) + bcolors.ENDC)
         self.update_balance(self.balance + value)
 
         return self.balance_sig

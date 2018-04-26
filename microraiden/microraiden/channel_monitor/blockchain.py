@@ -45,6 +45,7 @@ class Blockchain(gevent.Greenlet):
         #     has ether to spend again
         self.insufficient_balance = False
         self.sync_start_block = NETWORK_CFG.start_sync_block
+#        self.wait_to_withdraw = 
 
 
     ''' 
@@ -160,7 +161,7 @@ class Blockchain(gevent.Greenlet):
                 **filters_confirmed
             )
             for log in logs:
-                self.log.info('detected a channel close request in channel manager')
+                self.log.debug('detected a channel close request in channel manager')
                 #assert is_same_address(log['args']['_receiver_address'], self.cm.state.receiver)
                 sender = log['args']['_sender_address']
                 receiver = log['args']['_receiver_address']
@@ -168,17 +169,17 @@ class Blockchain(gevent.Greenlet):
                 receiver = to_checksum_address(receiver)
                 open_block_number = log['args']['_open_block_number']
                 balance = log['args']['_balance']
-                self.log.info('sucessfully parsed the event information')
-                self.log.info('address of channel manager %s', self.channel_manager_contract.address)
+                self.log.debug('sucessfully parsed the event information')
+                self.log.debug('address of channel manager %s', self.channel_manager_contract.address)
                 try:
-                    self.log.info('params to get info: %s, %s, %d', sender, self.cm.state.receiver, open_block_number)
+                    self.log.debug('params to get info: %s, %s, %d', sender, self.cm.state.receiver, open_block_number)
                     mtimeout,timeout = self.channel_manager_contract.call().getChannelInfo(
                         sender,
                         self.cm.state.receiver,
                         open_block_number
                     )[2:4]
                 except BadFunctionCallOutput:
-                    self.log.info('BadFunctionCallOutput error caught when trying to get channel info')
+                    self.log.debug('BadFunctionCallOutput error caught when trying to get channel info')
                     continue
                 try:
                     self.cm.event_channel_close_requested(sender, open_block_number, balance, timeout)
@@ -189,35 +190,6 @@ class Blockchain(gevent.Greenlet):
                     self.insufficient_balance = True
                     # TODO: recover
 
-
-#            logs = get_logs(
-#                self.channel_manager_contract,
-#                'DebugInputs',
-#                **filters_unconfirmed
-#            )
-#
-#            for log in logs:
-#                msg = log['args']['msg']
-#                sig = log['args']['sig']
-#                
-#                print('inputs')
-#                print('msg', type(msg), msg)
-#                print('sig', type(sig), sig)
-#
-#            logs = get_logs(
-#                self.channel_manager_contract,
-#                'DebugVerify',
-#                **filters_unconfirmed
-#            )
-#
-#            for log in logs:
-#                sender = log['args']['_sender']
-#                msg = log['args']['msg']
-#                dig = log['args']['sig']
-#
-#                print('verify')
-#                print('msg', type(msg), msg)
-#                print('sig', type(sig), sig)
 
             # channel settled event
             logs = get_logs(
@@ -245,7 +217,7 @@ class Blockchain(gevent.Greenlet):
                 sender = to_checksum_address(log['args']['_sender_address'])
                 open_block_number = log['args']['_open_block_number']
                 
-                self.log.info('Customer triggered a dispute (customer %s, sender %s, open_block_number %d)',
+                self.log.info('Customer triggered a dispute (customer %s, sender %s, open_block_number %d)\n',
                     customer,
                     sender,
                     open_block_number
@@ -260,7 +232,7 @@ class Blockchain(gevent.Greenlet):
             )
 
             for log in logs:
-                self.log.info('\n\n saw resolve event happen \n\n')
+                self.log.debug('\n\n saw resolve event happen \n\n')
 
             logs = get_logs(
                 self.channel_monitor_contract,
@@ -269,7 +241,7 @@ class Blockchain(gevent.Greenlet):
             )
 
             for log in logs:
-                self.log.info('detected successful WITHDRAW in monitor contract')
+                self.log.debug('detected successful WITHDRAW in monitor contract')
 
 
         # update head hash and number

@@ -65,6 +65,15 @@ import json
     '--output-json',
     help='Testing flag to output config file.'
 )
+@click.option(
+    '--delta-settle',
+    default=3
+)
+@click.option(
+    '--delta-withdraw',
+    default=20
+)
+
 def main(**kwargs):
     project = Project()
 
@@ -77,6 +86,8 @@ def main(**kwargs):
     token_symbol = kwargs['token_symbol']
     token_address = kwargs['token_address']
     output_json = kwargs['output_json']
+    delta_settle = kwargs['delta_settle']
+    delta_withdraw = kwargs['delta_withdraw']
     supply *= 10**(token_decimals)
     txn_wait = 250
 
@@ -125,6 +136,13 @@ def main(**kwargs):
         print(token_name, 'address is', token_address)
         print(token_name, 'tx is', encode_hex(txhash))
 
+        print('Giving address %s some tokens.' % web3.eth.accounts[1])
+        txid = token.transact({'from': web3.eth.accounts[1], 'value': web3.toWei(100, 'finney'), 'to': token_address}).mint()
+        print('Minting transaction: %s' % txid)
+        receipt = check_succesful_tx(web3, txid, txn_wait)
+
+        print('Minting transaction finished')
+
         microraiden_contract = chain.provider.get_contract_factory('RaidenMicroTransferChannels')
         txhash = microraiden_contract.deploy(
             args=[token_address, challenge_period, []],
@@ -144,8 +162,11 @@ def main(**kwargs):
         
         guardian_contract = chain.provider.get_contract_factory('StateGuardian')
         txhash = guardian_contract.deploy(
-            args=[],
-            transaction={'from': owner}
+            args=[
+                delta_withdraw,
+                delta_settle
+            ],
+            transaction={'from': owner, 'value': 1}
         )
         receipt = check_succesful_tx(chain.web3, txhash, txn_wait)
         guardian_address = receipt['contractAddress']

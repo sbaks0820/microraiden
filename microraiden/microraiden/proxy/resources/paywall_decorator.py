@@ -10,7 +10,9 @@ from microraiden.exceptions import (
     NoOpenChannel,
     InvalidBalanceProof,
     InvalidBalanceAmount,
-    InsufficientConfirmations
+    InsufficientConfirmations,
+    NoMonitorDeposit,
+    UnconfirmedMonitorDeposit,
 )
 import microraiden.constants as constants
 from microraiden.proxy.resources.request_data import RequestData
@@ -116,6 +118,16 @@ class Paywall(object):
             log.debug('Refused payment: Invalid balance proof: %s (sender=%s, block=%d)' %
                       (str(e), data.sender_address, data.open_block_number))
             headers.update({header.INVALID_PROOF: 1})
+            return True, headers
+        except NoMonitorDeposit as e:
+            log.debug('Refused payment: Monitor deposit not placed: %s (sender=%s, block=%d)' %
+                    (str(e), data.sender_address, data.open_block_number))
+            headers.update({header.NO_MONITOR_DEPOSIT: 1})
+            return True, headers
+        except UnconfirmedMonitorDeposit as e:
+            log.debug('Refused payment: Monitor deposit not confirmed: %s (sender=%s, block=%d)' %
+                    (str(e), data.sender_address, data.open_block_number))
+            headers.update({header.DEPOSIT_UNCONFIRMED: 1})
             return True, headers
 
         # set headers to reflect channel state

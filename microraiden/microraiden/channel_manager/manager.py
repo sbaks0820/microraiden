@@ -21,6 +21,7 @@ import random
 from microraiden.utils import (
     verify_balance_proof,
     verify_monitor_balance_proof,
+    verify_monitor_balance_proof2,
     sign_monitor_balance_proof,
     privkey_to_addr,
     sign_close,
@@ -31,12 +32,16 @@ from microraiden.utils import (
     get_receipt_message,
     sign_receipt,
     verify_receipt,
+    verify_receipt2,
     sign_cond_payment,
     verify_cond_payment,
     get_balance_message,
     get_monitor_balance_message,
+    get_monitor_balance_message2,
     keccak256,
-    keccak256_hex
+    keccak256_hex,
+    bcolors,
+    get_state_hash
 )
 
 #from microraiden.exceptions import (
@@ -231,8 +236,9 @@ class ChannelManager(gevent.Greenlet):
         self.log.info('customer deposit is %d', customer_deposit)
 
         state_flag = self.channel_monitor_contract.call().ID(self.receiver)
-        print('State information!:', state_flag)
+        self.log.info('State information!: %s', state_flag)
 
+        self.deposit_ready = True
         if customer_deposit == 0:
             raw_tx = create_signed_contract_transaction(
                 self.private_key,
@@ -242,24 +248,25 @@ class ChannelManager(gevent.Greenlet):
                 value=10,
             )
     
-            self.log.info('sent deposit transaction to address %s',
+            self.log.debug('sent deposit transaction to address %s',
                 self.channel_monitor_contract.address
             )
     
             txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
-            self.log.info('waiting for tx %s',
+            self.log.debug('send deposit tx %s',
                 encode_hex(txid)
             )
-    
-            wait_for_transaction(self.blockchain.web3, txid)
-            self.log.info('transaction %s has been waited for',
-                encode_hex(txid)
-            )
-       
-        customer_deposit = int(self.channel_monitor_contract.call().balance(self.receiver))
-        assert customer_deposit != 0
         
-        self.log.info('channel manager setup is finished')
+            self.deposit_ready = False
+    
+            #wait_for_transaction(self.blockchain.web3, txid)
+            #self.log.info('transaction %s has been waited for',
+            #    encode_hex(txid)
+            #)
+       
+        self.log.info('channel manager setup is finished\n')
+        print(bcolors.BOLD + "Channel Manager Setup Finished\n" + bcolors.ENDC)
+
 
         self.previous_channel_sigs = {}
 #        self.signed_receipts = {}
@@ -310,7 +317,21 @@ class ChannelManager(gevent.Greenlet):
                                      confirmed_head_hash=confirmed_head_hash)
 
 
-    
+   
+    def event_deposit_unconfirmed(self, sender, deposit):
+        assert is_checksum_address(sender)
+
+        self.log.info('Receiver unconfirmed deposit into monitor contract')
+
+    def event_deposit(self, sender, deposit):
+        assert is_checksum_address(sender)
+        
+        customer_deposit = int(self.channel_monitor_contract.call().balance(self.receiver))
+        assert customer_deposit != 0
+        
+        self.log.info('Received confirmed deposit into monitor contract, let clients request.')
+        self.deposit_ready = True
+
     def outsource_channel(self, channel: Channel):
         if self.monitor:
             self.monitor.send([OUTSOURCE_MESSAGE, channel.sender, channel.receiver, channel.open_block_number])
@@ -330,10 +351,10 @@ class ChannelManager(gevent.Greenlet):
                     channel.open_block_number
                 )
             else:
-                self.log.info('monitor not responding to outsource request, likely failed')
+                self.log.info('monitor not responding to outsource request, likely failed\n')
                 self.monitor = None
         else:
-            self.log.info('monitor connection failed previously, monitor is None object now')
+            self.log.info('monitor connection failed previously, monitor is None object now\n')
 
     # relevant events from the blockchain for receiver from contract
 
@@ -345,8 +366,11 @@ class ChannelManager(gevent.Greenlet):
         c = Channel(self.state.receiver, sender, deposit, open_block_number)
         c.confirmed = True
         c.state = ChannelState.OPEN
-        self.log.info('new channel opened (sender %s, block number %s)', sender, open_block_number)
+        self.log.info('New channel opened (sender %s, block number %s)', sender, open_block_number)
         self.state.set_channel(c)
+        
+        c = self.channels[sender, open_block_number]
+#        assert c.round_number == 0
 
         self.outsource_channel(c)
 
@@ -363,7 +387,7 @@ class ChannelManager(gevent.Greenlet):
         c.confirmed = False
         c.state = ChannelState.OPEN
         self.state.set_channel(c)
-        self.log.info('unconfirmed channel event received (sender %s, block_number %s)',
+        self.log.debug('unconfirmed channel event received (sender %s, block_number %s)',
                       sender, open_block_number)
 
     def unconfirmed_event_monitor_intereference(self, sender: str, receiver: str, open_block_number: int):
@@ -394,15 +418,32 @@ class ChannelManager(gevent.Greenlet):
             return
         c = self.channels[sender, open_block_number]
         if c.balance > balance:
-            self.log.warning('sender tried to cheat, sending challenge '
+            self.log.info('sender tried to cheat, sending challenge '
                              '(sender %s, block number %s)',
                              sender, open_block_number)
+
+            print(bcolors.FAIL +
+                    'Server: client tried to close incorrectly:' + 
+                    '\n\tSender: %s' % sender +
+                    '\n\tMy Balance: %s' % c.balance +
+                    '\n\tSender Balance: %s' % balance +
+                    bcolors.ENDC
+            )
+
             #self.wait_to_dispute[monitor_timeout] = (sender, open_block_number, balance, monitor_timeout, settle_timeout)
             self.close_channel(sender, open_block_number)  # dispute by closing the channel
         else:
             self.log.info('valid channel close request received '
                           '(sender %s, block number %s, timeout %d)',
                           sender, open_block_number, settle_timeout)
+            print(bcolors.OKGREEN +
+                    'Server: client closed correctly' +
+                    '\n\tsender: %s' % sender +
+                    '\n\tmy balance %s' % c.balance +
+                    '\n\tsender balance %s' % balance +
+                    bcolors.ENDC
+            )
+
             c.settle_timeout = settle_timeout
             c.monitor_timeout = monitor_timeout
             c.is_closed = True
@@ -428,66 +469,92 @@ class ChannelManager(gevent.Greenlet):
 
         settle_block_number, evidence = self.channel_manager_contract.call().getClosingInfo(sender, self.state.receiver, open_block_number)
 
-        try:
-            m = self.signed_receipts[sender, open_block_number]
-        except KeyError:
-            self.log.info('NO valid receipt from the monitor')
-            return
-
-        self.log.info('Valid receipt and channel settle (\n\treceipt balance message hash %s, \n\tevidence %s)',
-            encode_hex(m.balance_message_hash),
-            encode_hex(evidence)
+        print(bcolors.OKGREEN +
+                '\nServer: Channel is settled (sender %s)' % sender +
+                bcolors.ENDC
         )
+        
+#        try:
+#            m = self.signed_receipts[sender, open_block_number]
+#        except KeyError:
+#            self.log.info('NO valid receipt from the monitor')
+#            return
 
-#        if closing_balance > monitor_balance:
-            #m = self.signed_receipts[sender, open_block_number]
-        if m.balance_message_hash != evidence:
-
-            self.log.info('sending recourse (\n\tsender %s, \n\topen_block_number %d, \n\timage %s, \n\tsignature %s, \n\treceipt hash %s, \n\tevidence %s)',
-                sender,
-                open_block_number,
-                encode_hex(m.image),
-                encode_hex(m.signature),
+        if (sender,open_block_number) in self.signed_receipts:
+            m = self.signed_receipts[sender,open_block_number]
+            self.log.info('Valid receipt and channel settle (\n\treceipt balance message hash %s, \n\tevidence %s)',
                 encode_hex(m.balance_message_hash),
                 encode_hex(evidence)
             )
 
-            sig_addr = verify_receipt(
-                self.state.receiver,
-                to_checksum_address(sender),
-                open_block_number,
-                m.image,
-                m.t_start,
-                m.t_expire,
-                m.balance_message_hash,
-                m.signature
-            )
-          
-            self.log.info('signer of the receourse receipt \n\t%s', sig_addr)
-            if sig_addr.lower() == self.monitor_eth_address.lower():
-                print('\n\nRECEIPT CHECKS OUT\n\n')
-            else:
-                print('\n\nRECEIPT DOESNT CHECK OUT\n\n')
-           
-            raw_tx = create_signed_contract_transaction(
-                self.private_key,
-                self.channel_monitor_contract,
-                'recourse',
-                [
-                    sender,
+#            if closing_balance > monitor_balance:
+                #m = self.signed_receipts[sender, open_block_number]
+            if m.balance_message_hash != evidence:
+                self.log.info('Sending recourse (\n\tsender %s, \n\topen_block_number %d)', sender, open_block_number)
+#                self.log.info('sending recourse (\n\tsender %s, \n\topen_block_number %d, \n\timage %s, \n\tsignature %s, \n\treceipt hash %s, \n\tevidence %s)',
+#                    sender,
+#                    open_block_number,
+#                    encode_hex(m.image),
+#                    encode_hex(m.signature),
+#                    encode_hex(m.balance_message_hash),
+#                    encode_hex(evidence)
+#                )
+
+                sig_addr = verify_receipt(
+                    self.state.receiver,
+                    to_checksum_address(sender),
                     open_block_number,
                     m.image,
                     m.t_start,
                     m.t_expire,
                     m.balance_message_hash,
-                    m.signature,
-                    m.pre_image,
-                ]
-            )
+                    m.signature
+                )
+              
+                self.log.debug('signer of the receourse receipt \n\t%s', sig_addr)
+#                if sig_addr.lower() == self.monitor_eth_address.lower():
+#                    print('\n\nRECEIPT CHECKS OUT\n\n')
+#                else:
+#                    print('\n\nRECEIPT DOESNT CHECK OUT\n\n')
+                
+                print(bcolors.OKGREEN +
+                        '\nServer: Requesting recourse from monitor' +
+                        '\n\tcurrent balance %s' %  self.blockchain.web3.eth.getBalance(self.receiver) +
+                        '\n\tflag of contract %s' % self.channel_monitor_contract.call().flag() + 
+                        bcolors.ENDC
+                )
 
-            txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
+                print(bcolors.OKGREEN +
+                        '\n\tMonitor balance: %d' % int(self.blockchain.web3.eth.getBalance(sender)) +
+                        '\n\tServer balance: %d' % int(self.blockchain.web3.eth.getBalance(self.receiver)) +
+                        bcolors.ENDC
+                )
+               
+                raw_tx = create_signed_contract_transaction(
+                    self.private_key,
+                    self.channel_monitor_contract,
+                    'recourse',
+                    [
+                        sender,
+                        open_block_number,
+                        m.image,
+                        m.t_start,
+                        m.t_expire,
+                        m.balance_message_hash,
+                        m.signature,
+                        m.pre_image,
+                    ]
+                )
 
-            self.log.info('send recourse transaction \n\t(txid %s)', encode_hex(txid))
+                txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
+                
+#                print(bcolors.OKGREEN +
+#                        '\nServer: ecourse tx %s' % encode_hex(txid) +
+#                        bcolors.ENDC
+#                )
+
+
+                self.log.info('send recourse transaction \n\t(txid %s)', encode_hex(txid))
 
 #            self.log.info('sent recourse transaction (closing %d, monitor %d, txid %s)',
 #                closing_balance,
@@ -496,7 +563,13 @@ class ChannelManager(gevent.Greenlet):
 #            )
 
         
-        self.log.info('Forgetting settled channel (sender %s, block number %s)',
+        print(bcolors.OKGREEN +
+                '\nServer: Forgetting channel' +
+                '\n\tsender %s' % sender +
+                bcolors.ENDC
+        )
+
+        self.log.info('Forgetting settled channel (sender %s, block number %s)\n',
                       sender, open_block_number)
         self.state.del_channel(sender, open_block_number)
 
@@ -591,6 +664,13 @@ class ChannelManager(gevent.Greenlet):
             txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
             self.log.info('sent channel close(sender %s, block number %s, tx %s)',
                           sender, open_block_number, encode_hex(txid))
+            print(bcolors.OKGREEN +
+                    '\nServer: Closing Channel' +
+                    '\n\tsender %s' % sender +
+                    '\n\tbalance %s' % c.balance +
+                    bcolors.ENDC
+            )
+
         except InsufficientBalance:
             c.state = ChannelState.CLOSE_PENDING
             self.state.set_channel(c)
@@ -672,17 +752,22 @@ class ChannelManager(gevent.Greenlet):
         if c.is_closed:
             raise NoOpenChannel('Channel closing has been requested already.')
 
-        debug_print([self.receiver, open_block_number, balance, decode_hex(signature), self.channel_manager_contract.address, c.next_nonce])
+        if not self.deposit_ready:
+            raise UnconfirmedMonitorDeposit('Deposit not yet confirmed. Client needs to wait')
 
-        sig_addr = verify_monitor_balance_proof(
+#        debug_print(['\nverify proof', self.receiver, open_block_number, balance, encode_hex(signature), self.channel_manager_contract.address, c.next_nonce, c.round_number+1])
+
+        sig_addr = verify_monitor_balance_proof(#2(
             self.receiver,
             open_block_number,
             balance,
             decode_hex(signature),
             self.channel_manager_contract.address,
-            123456789
-#            c.next_nonce
+            123456789,
+#            c.round_number + 1
         )
+
+#        print(bcolors.OKGREEN + 'Expecting round number %d' % (c.round_number + 1) + bcolors.ENDC)
 
         if not is_same_address(
                 sig_addr,
@@ -697,35 +782,44 @@ class ChannelManager(gevent.Greenlet):
 #        self.c.next_nonce = self.c.rng.getrandbits(256)
         return c
 
-    def send_proof_to_monitor(self, sender: str, receiver: str, open_block_number: int, balance: int, signature: bytes, nonce: int):
+    def send_proof_to_monitor(self, sender: str, receiver: str, open_block_number: int, balance: int, signature: bytes, nonce: int, round_number: int):
         sender = to_checksum_address(sender)
         receiver = to_checksum_address(receiver)
 
 #        balance_message_hash = get_balance_message(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address)
         #balance_message_hash = get_monitor_balance_message(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, nonce)
         balance_message_hash = get_monitor_balance_message(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789)
+        #balance_message_hash = get_state_hash(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789)
+        #self.log.info('Server (state_hash %s, round_number %d)', balance_message_hash, round_number)
+
         #print('\nbalance sig')
         #debug_print([sender, receiver, open_block_number, balance_message_hash, signature])
         self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, balance_message_hash, signature])
+        #self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, round_number, balance_message_hash, signature])
 
 #        self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, signature])
-        self.log.info('WAIT FOR MONITOR TO ACCEPT BALANCE SIG') 
+        self.log.debug('WAIT FOR MONITOR TO ACCEPT BALANCE SIG') 
         #while not self.monitor.poll():
         #    pass
 
         recv = self.monitor.recv()
-        self.log.info('MONITOR RESPONDED')
+        self.log.debug('MONITOR RESPONDED')
 
         if recv == BALANCE_SIG_NOT_ACCEPTED:
             self.log.info("monitor didn't accept the signature")
             return
+        if recv == NO_CONTRACT_DEPOSIT:
+            raise NoMonitorDeposit("Monitor didn't see a deposit.")
 
-        self.log.info('GOT TO THIS POINT CHECKING TYPE AND RETURN VALUE (type %s)',
+        self.log.debug('GOT TO THIS POINT CHECKING TYPE AND RETURN VALUE (type %s)',
             str(type(recv))
         )
 
         if type(recv) == list and recv[0] == MONITOR_RECEIPT:
             _customer,_sender,_open_block_number,_image,_t_start,_t_expire,_balance_message_hash = recv[1]
+            #_customer,_sender,_open_block_number,_image,_t_start,_t_expire,_round_number,_balance_message_hash = recv[1]
+            self.log.info('Receipt (balance message hash %s)', encode_hex(_balance_message_hash))
+            #self.log.info('Receipt (round number %s, balance message hash %s, state hash %s)', _round_number, encode_hex(_balance_message_hash), encode_hex(balance_message_hash))
             
             assert _sender == sender
             assert _customer == receiver
@@ -748,11 +842,12 @@ class ChannelManager(gevent.Greenlet):
                 _image,
                 _t_start,
                 _t_expire,
+#                round_number,
                 _balance_message_hash,
                 signed_receipt_msg
             )
             
-            self.log.info('received a receipt signed by %s', sig_addr)
+            self.log.debug('received a receipt signed by %s', sig_addr)
 
             assert sig_addr.lower() == self.monitor_eth_address.lower()
    
@@ -767,16 +862,17 @@ class ChannelManager(gevent.Greenlet):
                 _image
             )
 
-            #print('\nconditional payment\n')
-            #debug_print([_customer, _sender, _open_block_number, self.payment_channel.payout, True, _image, cond_payment_sig])
+            print('\nconditional payment\n')
+            debug_print([_customer, _sender, _open_block_number, self.payment_channel.payout, True, _image, cond_payment_sig])
 
             self.monitor.send([CONDITIONAL_PAYMENT, _customer, _sender, _open_block_number, self.payment_channel.payout, True, _image, cond_payment_sig])
-
+            self.log.info("sent the conditional payment")
             start = time.time()
-            
+            self.log.info("Waiting for monitor to send the pre-image") 
             pre_image = self.monitor.recv()
 
             if pre_image is not None:
+                self.log.info("pre image is not none")
                 assert keccak256((pre_image, 32)) == _image
                 self.monitor_channels[sender, open_block_number] = True
                 self.payment_channel.fair_exchange = True
@@ -798,7 +894,13 @@ class ChannelManager(gevent.Greenlet):
 
                 txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
 
-                self.log.info("triggered dispute because the monitor didn't reveal the pre-image in the receipt \n\t(txid %s)", encode_hex(txid))
+                self.log.info("Triggered dispute because the monitor didn't reveal the pre-image in the receipt \n\t(txid %s)\n", encode_hex(txid))
+
+                print(bcolors.OKGREEN + 
+                        "Server: Monitor didn't reveal pre-image, triggering dispute."
+                        + bcolors.ENDC
+                )
+
                 self.monitor_channels[sender, open_block_number] = False
                 self.payment_channel.fair_exchange = False
 
@@ -828,12 +930,14 @@ class ChannelManager(gevent.Greenlet):
         c.last_nonce = c.nonce
         c.nonce = c.next_nonce
         c.next_nonce = c.rng.getrandbits(256)
-        self.log.info('Channel (%s, %d) \n\tlast nonce %s \n\tnonce %s \n\tnext nonce %s',
-            sender, open_block_number,
-            str(c.last_nonce),
-            str(c.nonce),
-            str(c.next_nonce)
-        )
+#        c.round_number += 1
+#        print(bcolors.OKGREEN + 'round number is now %d' % c.round_number + bcolors.ENDC)
+#        self.log.info('Channel (%s, %d) \n\tlast nonce %s \n\tnonce %s \n\tnext nonce %s',
+#            sender, open_block_number,
+#            str(c.last_nonce),
+#            str(c.nonce),
+#            str(c.next_nonce)
+#        )
 
         received = balance - c.balance
         c.balance = balance
@@ -846,12 +950,19 @@ class ChannelManager(gevent.Greenlet):
         self.log.debug('registered payment \n\t(sender %s, \n\tblock number %s, \n\tnew balance %s)',
                        c.sender, open_block_number, balance)
 
+        print(bcolors.OKGREEN + 
+                'Server: New State of Channel:'
+                '\n\tSender: %s' % c.sender + 
+                '\n\tNew Balance: %d' % balance
+                + bcolors.ENDC
+        )
 
         if self.payment_channel.fair_exchange:
             #self.send_proof_to_monitor(sender, c.receiver, open_block_number, balance, signature, c.nonce)
-            self.send_proof_to_monitor(sender, c.receiver, open_block_number, balance, signature, 123456789)
+            self.send_proof_to_monitor(sender, c.receiver, open_block_number, balance, signature, 123456789, c.round_number)
         else:
-            self.log.info("DON'T outsource to monitor because he didn't do the fair exchange correctly")
+            self.log.debug("DON'T outsource to monitor because he didn't do the fair exchange correctly")
+
 
         return c.sender, received
 
@@ -948,22 +1059,23 @@ class ChannelManager(gevent.Greenlet):
             open_block_number
         )
 
-        self.log.info('got monitor evidence (\n\tmsg %s, \n\tsig %s)',
-            balance_msg,
-            balance_sig
-        )
+#        self.log.info('got monitor evidence (\n\tmsg %s, \n\tsig %s)',
+#            balance_msg,
+#            balance_sig
+#        )
 
         channel = self.channels[sender, open_block_number]
         
         if encode_hex(balance_sig) in self.previous_channel_sigs:
-            self.log.info('\n\nthe monitor signature submitted was ACTUALLY an old one \n\t(sig %s)',
+            self.log.debug('the monitor signature submitted was ACTUALLY an old one \n\t(sig %s)\n',
                 encode_hex(balance_sig)
             )
+
         else:
-            self.log.info('\n\nthe monitor evidence was NOT found in previous payments \n\t(sig %s)',
+            self.log.debug('the monitor evidence was NOT found in previous payments \n\t(sig %s)\n',
                 encode_hex(balance_sig)
             )
-            print('\n\n%s\n\n', self.previous_channel_sigs)
+            #print('\n\n%s\n\n', self.previous_channel_sigs)
             return
 
         _sender, _open_block_number, _balance, _nonce = self.previous_channel_sigs[encode_hex(balance_sig)]
@@ -982,12 +1094,20 @@ class ChannelManager(gevent.Greenlet):
             sig_addr,
             sender
         ):
-            self.log.info('WARNING: monitor gave signature for different address (\n\tsig addr %s, \n\tsener %s)',
+            self.log.info('WARNING: monitor gave signature for different address (\n\tsig addr %s, \n\tsener %s)\n',
                 sig_addr,
                 sender
             )
+            print(bcolors.FAIL +
+                    '\nServer: Monitor submitted old state!'
+                    + bcolors.ENDC
+            )
         else: 
-            self.log.info('monitor responded with the most recent state, HOORAY!')
+            self.log.info('monitor responded with the most recent state, HOORAY!\n')
+            print(bcolors.OKGREEN +
+                    '\nServer: Monitor submitted latest state!'
+                    + bcolors.ENDC
+            )
 
         #else:
         #    if encode_hex(balance_sig) in self.previous_channel_sigs:
@@ -1014,7 +1134,7 @@ class ChannelManager(gevent.Greenlet):
         assert settle_timeout >= 0
 
         if (sender, open_block_number) not in self.channels:
-            self.log.info('SHIIIET: trying to reveal evidence for channel not tracked!')
+            self.log.debug('SHIIIET: trying to reveal evidence for channel not tracked!')
             return
         c = self.channels[sender, open_block_number]
         
@@ -1029,10 +1149,10 @@ class ChannelManager(gevent.Greenlet):
         _sender,_open_block_number,_balance,_nonce = self.previous_channel_sigs[encode_hex(balance_sig)]
         r = self.signed_receipts[sender, open_block_number]
 
-        if r.balance_message_hash == balance_msg:
-            print('MONITORS EVIDENCE IS THE THE ONE HE AGREED TO IN THE RECEIPT\n')
-        else:
-            print('MONITOR DIDNT POST THE BALANCE MESSAGE FROM THE RECEIPT\n')
+#        if r.balance_message_hash == balance_msg:
+#            print('MONITORS EVIDENCE IS THE THE ONE HE AGREED TO IN THE RECEIPT\n')
+#        else:
+#            print('MONITOR DIDNT POST THE BALANCE MESSAGE FROM THE RECEIPT\n')
 
         self.log.info('(balance message hash %s, evidence %s)', r.balance_message_hash, balance_msg);
 
@@ -1040,24 +1160,24 @@ class ChannelManager(gevent.Greenlet):
         assert _sender == sender
         assert _open_block_number == open_block_number
     
-        self.log.info('revealing evidence (\n\tchannel balance %d, \n\tclient balance %d, \n\tmonitor balance %d)',
-            c.balance,
-            balance,
-            _balance
-        )
+#        self.log.info('revealing evidence (\n\tchannel balance %d, \n\tclient balance %d, \n\tmonitor balance %d)',
+#            c.balance,
+#            balance,
+#            _balance
+#        )
+#
+#        self.log.info('provided balance message \n\t%s',
+#            balance_msg
+#        )
 
-        self.log.info('provided balance message \n\t%s',
-            balance_msg
-        )
-
-        self.log.info('calculatred balance messagae \n\t%s',
-            get_balance_message(
-                self.state.receiver,
-                open_block_number,
-                _balance,
-                self.channel_manager_contract.address
-            )
-        )
+#        self.log.info('calculatred balance messagae \n\t%s',
+#            get_balance_message(
+#                self.state.receiver,
+#                open_block_number,
+#                _balance,
+#                self.channel_manager_contract.address
+#            )
+#        )
 
         raw_tx = create_signed_contract_transaction(
             self.private_key,
@@ -1068,11 +1188,17 @@ class ChannelManager(gevent.Greenlet):
 
         txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
 
-        self.log.info('sent reveal transaction \n\t%s', encode_hex(txid))
+        self.log.info('sent reveal transaction \n\t%s\n', encode_hex(txid))
 
     def event_dispute(self, customer: str, sender: str, open_block_number: int):
         assert is_checksum_address(customer)
         assert is_checksum_address(sender)
+        print(bcolors.OKGREEN +
+                '\n\tMonitor balance: %d' % self.blockchain.web3.eth.getBalance(sender) +
+                '\n\tServer balance: %d' % (self.blockchain.web3.eth.getBalance(self.receiver)) +
+                bcolors.ENDC
+        )
+               
 
         raw_tx = create_signed_contract_transaction(
             self.private_key,
@@ -1083,7 +1209,12 @@ class ChannelManager(gevent.Greenlet):
 
         txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
 
-        self.log.info('send RESOLVE transaction %s', encode_hex(txid))
+        print(bcolors.OKGREEN +
+                "Server: Monitor didn't redeem payment so resolve the channel..." +
+                bcolors.ENDC
+        )
+
+        self.log.info('send RESOLVE transaction %s\n', encode_hex(txid))
 
     def event_set_state(self, customer: str, sender: str, open_block_number: int, pre_image: int):
         assert is_checksum_address(customer)
@@ -1098,21 +1229,28 @@ class ChannelManager(gevent.Greenlet):
         if (sender, open_block_number) in self.signed_receipts:
             m = self.signed_receipts[sender,open_block_number]
             assert m.pre_image == image
-            print('STRANGE, THE MONITOR ALREADY REVEALED THE PRE-IMAGE AND IS STILL CALLING SETSTATE')
+            #print('STRANGE, THE MONITOR ALREADY REVEALED THE PRE-IMAGE AND IS STILL CALLING SETSTATE')
         elif (sender, open_block_number) in self.not_yet_valid:
             m = self.not_yet_valid[sender, open_block_number]
             if keccak256((pre_image, 32)) == m.image:
                 m.pre_image = pre_image
                 self.signed_receipts[sender,open_block_number] = m
                 del self.not_yet_valid[sender,open_block_number]
-                print('PRE-IMAGE MAKES THIS NEW RECEIPT VALID. MOVING TO SIGNED_RECEIPTS')
+                print(bcolors.OKGREEN +
+                        'Server: Monitor redeemed payment on chain' + 
+                        '\n\tpre image: %d' % pre_image +
+                        '\n\tReceipt is now valid!' +
+                        '\n\tNo need to resolve dispute now!' +
+                        bcolors.ENDC
+                )
+             #   print('PRE-IMAGE MAKES THIS NEW RECEIPT VALID. MOVING TO SIGNED_RECEIPTS')
             else:
-                print('THE IMAGE ISNT FOR AN EXISTING FAIR EXCHANGE, SO JUST IGNORE IT I GUESS?')
+              #  print('THE IMAGE ISNT FOR AN EXISTING FAIR EXCHANGE, SO JUST IGNORE IT I GUESS?')
                 return
 
 #        m.pre_image = pre_image
 
-        self.log.info('Deleting resolve timer for channel with monitor')
+        self.log.debug('Deleting resolve timer for channel with monitor')
 
         del self.blockchain.wait_to_resolve[self.blockchain.resolve_timeouts[sender,open_block_number]]
         del self.blockchain.resolve_timeouts[sender,open_block_number]

@@ -21,6 +21,8 @@ class HTTPHeaders(object):
     NONEXISTING_CHANNEL = 'RDN-Nonexisting-Channel'
     INVALID_PROOF = 'RDN-Invalid-Balance-Proof'
     INVALID_AMOUNT = 'RDN-Invalid-Amount'
+    NO_MONITOR_DEPOSIT = 'RDN-Monitor-Not-Ready'
+    DEPOSIT_UNCONFIRMED= 'RDN-Monitor-Deposit-Unconfirmed'
 
     DESERIALIZE_DICT = None
     SERIALIZE_DICT = None
