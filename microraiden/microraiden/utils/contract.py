@@ -89,6 +89,7 @@ def create_signed_contract_transaction(
         gas_limit=gas_limit
     )
     sign_transaction(tx, private_key, int(contract.web3.version.network))
+#    sign_transaction(tx, private_key, 1337)
     return encode_hex(rlp.encode(tx))
 
 

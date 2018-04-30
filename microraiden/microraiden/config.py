@@ -42,7 +42,8 @@ NETWORK_CONFIG_DEFAULTS = {
     # mainnet
     1: NetworkConfig(
         channel_manager_address='0x1440317CB15499083dEE3dDf49C2bD51D0d92e33',
-        start_sync_block=4958602,
+        #start_sync_block=4958602,
+        start_sync_block=0,
         gas_price=20 * denoms.gwei
     ),
     # ropsten
@@ -62,6 +63,10 @@ NETWORK_CONFIG_DEFAULTS = {
     ),
     # internal - used only with ethereum tester
     65536: NetworkConfig(
+        channel_manager_address='0x0',
+        start_sync_block=0
+    ),
+    1337: NetworkConfig(
         channel_manager_address='0x0',
         start_sync_block=0
     )

@@ -55,6 +55,7 @@ contract StateGuardian {
     address public monitor = msg.sender;
 
     mapping (address => channel) public ID;
+    mapping (bytes32 => uint32) public pre_images;
 //    mapping (address => Channel[]) public ID;
 
     function StateGuardian(uint32 _delta_withdraw, uint32 _delta_settle)
@@ -177,6 +178,7 @@ contract StateGuardian {
 
         num_customers -= 1;
 
+        pre_images[_hash] = _pre_image;
         Evidence(_customer, _sender, _pre_image, _open_block_number);
     }      
 
@@ -243,6 +245,7 @@ contract StateGuardian {
         uint32 open_block_number,
         uint32 t_start,
         uint32 t_expire,
+        uint32 round_number,
         bytes32 image,
         bytes32 balance_message_hash,
         bytes monitor_sig)
@@ -257,6 +260,7 @@ contract StateGuardian {
                 'uint32 start time',
                 'uint32 expire time',
                 'bytes32 image',
+                'uint32 round_number',
                 'bytes32 evidence'
             ),
             keccak256(
@@ -266,6 +270,7 @@ contract StateGuardian {
                 t_start,
                 t_expire,
                 image,
+                round_number,
                 balance_message_hash
             )
         );
@@ -279,59 +284,107 @@ contract StateGuardian {
 //    event DebugSigner(address _signer, bytes32 _image);
 //    event ClosingInfo(uint192 indexed _closing_balance, uint192 indexed _monitor_balance, uint32 indexed _settle_block);
     //event DebugHash(bytes32 indexed _image, bytes32 indexed _hash);
-    event RecourseResult(bytes32 indexed _evidence, bytes32 _receipt_hash, bool indexed _cheated);
+    event PreImageReveal(uint32 indexed _pre_image, bytes32 indexed _image);
 
+    function register_preimage(uint32 _pre_image, bytes32 _image) external
+    {
+        require(keccak256(_pre_image) == _image);
+        pre_images[_image] = _pre_image;
+        PreImageReveal(_pre_image, _image);
+    }
+
+    function check_receipt(
+        address sender,
+        uint32 open_block_number,
+        bytes32 image,
+        uint32 t_start,
+        uint32 t_expire,
+        uint32 round_number,
+        bytes32 balance_message_hash,
+        bytes monitor_sig)
+    {
+        require(image == keccak256(pre_images[image]));
+        require(
+            extractreceiptsignature(
+                msg.sender,
+                sender,
+                open_block_number,
+                t_start,
+                t_expire,
+                round_number,
+                image,
+                balance_message_hash,
+                monitor_sig
+            ) == monitor
+        );
+
+    }
+
+    event RecourseResult(uint32 indexed _round_number, bytes32 _receipt_hash, bool indexed _cheated);
     function recourse(
         address sender,
         uint32 open_block_number,
         bytes32 image,
         uint32 t_start,
         uint32 t_expire,
+        uint32 round_number,
         bytes32 balance_message_hash,
-        bytes monitor_sig,
-        uint32 pre_image)
+        bytes monitor_sig)
+        //uint32 pre_image)
         external
     {        
         require(flag != Flags.CHEATED);
-        require(keccak256(pre_image) == image);
-//        DebugHash(image, keccak256(pre_image));
+        //require(keccak256(pre_image) == image);
 
-        address signer = extractreceiptsignature(
-            msg.sender,
-            sender,
-            open_block_number,
-            t_start,
-            t_expire,
-            image,
-            balance_message_hash,
-            monitor_sig
+        check_receipt(
+            sender, open_block_number,
+            image, t_start,
+            t_expire, round_number,
+            balance_message_hash, monitor_sig
         );
+//        require(image == keccak256(pre_images[image]));
+////        DebugHash(image, keccak256(pre_image));
+//
+////        address signer = 
+//        require(extractreceiptsignature(
+//            msg.sender,
+//            sender,
+//            open_block_number,
+//            t_start,
+//            t_expire,
+//            round_number,
+//            image,
+//            balance_message_hash,
+//            monitor_sig
+//        ) == monitor);
 
-        require(signer == monitor);
+//        require(signer == monitor);
 
 //        uint192 closing_balance;
 //        uint192 monitor_balance;
         uint32 block_number;
-        bytes32 evidence;
+        uint32 best_round;
         //bool cheated = false;
 
+
 //        (closing_balance, monitor_balance, block_number) = ID[msg.sender].caddr.getClosingInfo(sender, msg.sender, open_block_number);
-        (block_number, evidence) = ID[msg.sender].caddr.getClosingInfo(sender, msg.sender, open_block_number);
-
-
-        //ClosingInfo(closing_balance, monitor_balance, block_number);
+        //(block_number, evidence) = ID[msg.sender].caddr.getClosingInfo(sender, msg.sender, open_block_number);
+        (block_number, best_round) = ID[msg.sender].caddr.getClosingInfo(sender, msg.sender, open_block_number);
 
         if (
             open_block_number <= t_start &&
             block_number < t_expire &&
-            evidence != balance_message_hash)
+            best_round < round_number
+        )
+//            evidence != balance_message_hash)
             //closing_balance > monitor_balance)
         {
             flag = Flags.CHEATED;
+            msg.sender.transfer(guardian_deposit);
             //cheated = true;
-            RecourseResult(evidence, balance_message_hash, true); 
+            RecourseResult(best_round, balance_message_hash, true); 
         } else {
-            RecourseResult(evidence, balance_message_hash, false);
+            RecourseResult(best_round, balance_message_hash, false);
         }
     } 
 

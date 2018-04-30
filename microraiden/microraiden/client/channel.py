@@ -57,6 +57,7 @@ class Channel:
         self.update_balance(balance)
         self.state = state
         self.on_settle = on_settle
+        self.last_round_signed
 
         assert self.block is not None
         assert self._balance_sig
@@ -82,16 +83,17 @@ class Channel:
     def sign(self):
         #self.last_nonce = self.nonce
         #self.nonce = self.rng.getrandbits(256)
-        print(bcolors.BOLD + 'Signing balance for round {}'.format(self.round_number + 1) + bcolors.ENDC)
-        sig = sign_monitor_balance_proof(#2(
+        print(bcolors.BOLD + 'Signing balance {},  round {}'.format(self.balance, self.round_number + 1) + bcolors.ENDC)
+        sig = sign_monitor_balance_proof2(
             self.core.private_key,
             self.receiver,
             self.block,
             self.balance,
             self.core.channel_manager.address,
             123456789,
-#            self.round_number + 1
+            self.round_number + 1
         )
+        self.last_round_signed = self.round_number + 1
         debug_print(['\nverify proof', self.receiver, self.block, self.balance, encode_hex(sig), self.core.channel_manager.address, 123456789, self.round_number+1])
         return sig
 

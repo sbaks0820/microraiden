@@ -23,6 +23,7 @@ from microraiden.utils import (
     verify_monitor_balance_proof,
     verify_monitor_balance_proof2,
     sign_monitor_balance_proof,
+    sign_monitor_balance_proof2,
     privkey_to_addr,
     sign_close,
     create_signed_contract_transaction,
@@ -96,7 +97,8 @@ class MonitorReceipt:
         _image: bytes,
         _balance_message_hash: bytes,
         _signature: bytes,
-        _nonce: int = 0
+        _nonce: int = 0,
+        _round_number: int = -1
     ):
         self.t_start = _t_start
         self.t_expire = _t_expire
@@ -105,6 +107,7 @@ class MonitorReceipt:
         self.nonce = _nonce
         self.signature = _signature
         self.pre_image = None
+        self.round_number = _round_number
 
 class MonitorChannel:
     def __init__(
@@ -205,6 +208,7 @@ class ChannelManager(gevent.Greenlet):
     
 
         if monitor_address:
+            print(bcolors.BOLD + 'Manager: connecting to monitor (address %s, port %d)' % (monitor_address, monitor_port) + bcolors.ENDC)
             self.monitor = Client((monitor_address, monitor_port))
             self.monitor.send('Start Connection')
             self.monitor_address = monitor_address
@@ -240,6 +244,7 @@ class ChannelManager(gevent.Greenlet):
 
         self.deposit_ready = True
         if customer_deposit == 0:
+            print(bcolors.BOLD + 'manager: block number %d' % (self.blockchain.web3.eth.blockNumber) + bcolors.ENDC)
             raw_tx = create_signed_contract_transaction(
                 self.private_key,
                 self.channel_monitor_contract,
@@ -253,7 +258,7 @@ class ChannelManager(gevent.Greenlet):
             )
     
             txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)
-            self.log.debug('send deposit tx %s',
+            self.log.info('send deposit tx %s',
                 encode_hex(txid)
             )
         
@@ -278,6 +283,8 @@ class ChannelManager(gevent.Greenlet):
         self.rng.seed(123456789)
         self.nonce = None
         self.last_nonce = self.nonce
+
+        self.seen_balances = defaultdict(dict)
         
     @property
     def monitor_channels(self):
@@ -467,7 +474,8 @@ class ChannelManager(gevent.Greenlet):
         #    settle_block_number
         #)
 
-        settle_block_number, evidence = self.channel_manager_contract.call().getClosingInfo(sender, self.state.receiver, open_block_number)
+#        settle_block_number, evidence = self.channel_manager_contract.call().getClosingInfo(sender, self.state.receiver, open_block_number)
+        settle_block_number, round_number = self.channel_manager_contract.call().getClosingInfo(sender, self.state.receiver, open_block_number)
 
         print(bcolors.OKGREEN +
                 '\nServer: Channel is settled (sender %s)' % sender +
@@ -482,14 +490,19 @@ class ChannelManager(gevent.Greenlet):
 
         if (sender,open_block_number) in self.signed_receipts:
             m = self.signed_receipts[sender,open_block_number]
-            self.log.info('Valid receipt and channel settle (\n\treceipt balance message hash %s, \n\tevidence %s)',
-                encode_hex(m.balance_message_hash),
-                encode_hex(evidence)
+#            self.log.info('Valid receipt and channel settle (\n\treceipt balance message hash %s, \n\tround_numbere %s)',
+#                encode_hex(m.balance_message_hash),
+#                encode_hex(evidence)
+#            )
+            self.log.info('Valid receipt and channel settle (\n\treceipt round number %s, \n\tround_number %s)',
+                m.round_number,
+                round_number
             )
 
 #            if closing_balance > monitor_balance:
                 #m = self.signed_receipts[sender, open_block_number]
-            if m.balance_message_hash != evidence:
+#            if m.balance_message_hash != evidence:
+            if m.round_number > round_number:
                 self.log.info('Sending recourse (\n\tsender %s, \n\topen_block_number %d)', sender, open_block_number)
 #                self.log.info('sending recourse (\n\tsender %s, \n\topen_block_number %d, \n\timage %s, \n\tsignature %s, \n\treceipt hash %s, \n\tevidence %s)',
 #                    sender,
@@ -500,13 +513,14 @@ class ChannelManager(gevent.Greenlet):
 #                    encode_hex(evidence)
 #                )
 
-                sig_addr = verify_receipt(
+                sig_addr = verify_receipt2(
                     self.state.receiver,
                     to_checksum_address(sender),
                     open_block_number,
                     m.image,
                     m.t_start,
                     m.t_expire,
+                    m.round_number,
                     m.balance_message_hash,
                     m.signature
                 )
@@ -540,9 +554,10 @@ class ChannelManager(gevent.Greenlet):
                         m.image,
                         m.t_start,
                         m.t_expire,
+                        m.round_number,
                         m.balance_message_hash,
                         m.signature,
-                        m.pre_image,
+#                        m.pre_image,
                     ]
                 )
 
@@ -650,7 +665,8 @@ class ChannelManager(gevent.Greenlet):
                 c.balance,
                 decode_hex(c.last_signature),
                 closing_sig,
-                123456789
+                123456789,
+                c.round_number
 #                c.nonce
             ]
         )
@@ -732,7 +748,8 @@ class ChannelManager(gevent.Greenlet):
         """Get eth balance of the receiver"""
         return self.channel_manager_contract.web3.eth.getBalance(self.receiver)
 
-    def verify_balance_proof(self, sender, open_block_number, balance, signature):
+    #def verify_balance_proof(self, sender, open_block_number, balance, signature, default_check=False):
+    def verify_balance_proof(self, sender, open_block_number, balance, signature, default_check=False, _round=None):
         """Verify that a balance proof is valid and return the sender.
 
         This method just verifies if the balance proof is valid - no state update is performed.
@@ -755,19 +772,71 @@ class ChannelManager(gevent.Greenlet):
         if not self.deposit_ready:
             raise UnconfirmedMonitorDeposit('Deposit not yet confirmed. Client needs to wait')
 
-#        debug_print(['\nverify proof', self.receiver, open_block_number, balance, encode_hex(signature), self.channel_manager_contract.address, c.next_nonce, c.round_number+1])
 
-        sig_addr = verify_monitor_balance_proof(#2(
+        print(bcolors.BOLD + 'Round number given through http %d' % (_round if _round != None else -1) + bcolors.ENDC)
+        final_round = c.round_number
+
+        debug_print(['\nverify proof', self.receiver, open_block_number, balance, signature, self.channel_manager_contract.address, c.next_nonce, c.round_number+1])
+
+        sig_addr = verify_monitor_balance_proof2(
             self.receiver,
             open_block_number,
             balance,
             decode_hex(signature),
             self.channel_manager_contract.address,
             123456789,
-#            c.round_number + 1
+            _round
         )
 
-#        print(bcolors.OKGREEN + 'Expecting round number %d' % (c.round_number + 1) + bcolors.ENDC)
+#        if balance in self.seen_balances[sender, open_block_number]:
+#            print(bcolors.BOLD + 'Old balance seen' + bcolors.ENDC)
+#            if _round != self.seen_balances[sender, open_block_number]:
+#                print(bcolors.BOLD + 'Old balance with a new number so invalid amount' + bcolors.ENDC)
+#                raise InvalidBalanceAmount() 
+
+        #if balance in self.seen_balances[sender, open_block_number]:
+        #    old_round_number = self.seen_balances[sender, open_block_number][balance]
+        #    debug_print(['\nvOLDROUND', self.receiver, open_block_number, balance, encode_hex(signature), self.channel_manager_contract.address, c.next_nonce, old_round_number])
+        #    print(bcolors.BOLD + 'Got an old balance. (balance %d, round number %d, reported number %d)' % (balance, old_round_number, _round))
+        #    sig_addr = verify_monitor_balance_proof2(
+        #        self.receiver,
+        #        open_block_number,
+        #        balance,
+        #        decode_hex(signature),
+        #        self.channel_manager_contract.address,
+        #        123456789,
+        #        old_round_number
+        #    )
+        #    final_round = old_round_number
+
+        #elif default_check:
+        #    print(bcolors.BOLD + 'Checking for default check' + bcolors.ENDC)
+        #    debug_print(['\nvDEFAULT', self.receiver, open_block_number, balance, encode_hex(signature), self.channel_manager_contract.address, c.next_nonce, (c.round_number) if c.round_number != 0 else 1])
+        #    sig_addr = verify_monitor_balance_proof2(
+        #        self.receiver,
+        #        open_block_number,
+        #        balance,
+        #        decode_hex(signature),
+        #        self.channel_manager_contract.address,
+        #        123456789,
+        #        #c.round_number + 1
+        #        (c.round_number) if c.round_number != 0 else 1
+        #    )
+        #    final_round = c.round_number if c.round_number != 0 else 1
+        #else:
+        #    #debug_print(['\nverify proof', self.receiver, open_block_number, balance, encode_hex(signature), self.channel_manager_contract.address, c.next_nonce, c.round_number+1])
+        #    sig_addr = verify_monitor_balance_proof2(
+        #        self.receiver,
+        #        open_block_number,
+        #        balance,
+        #        decode_hex(signature),
+        #        self.channel_manager_contract.address,
+        #        123456789,
+        #        c.round_number + 1
+        #    )
+        #    final_round = c.round_number + 1
+
+        print(bcolors.OKGREEN + 'Expecting round number %d' % (c.round_number + 1) + bcolors.ENDC)
 
         if not is_same_address(
                 sig_addr,
@@ -777,6 +846,8 @@ class ChannelManager(gevent.Greenlet):
             raise InvalidBalanceProof('Recovered signer does not match the sender')
         self.log.info('ADDRESS RESOLVED FOR BALANCE SIG: %s', sig_addr)
 
+        self.seen_balances[sender, open_block_number][balance] = final_round
+
         return c
 
     def send_proof_to_monitor(self, sender: str, receiver: str, open_block_number: int, balance: int, signature: bytes, nonce: int, round_number: int):
@@ -785,21 +856,30 @@ class ChannelManager(gevent.Greenlet):
 
 #        balance_message_hash = get_balance_message(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address)
         #balance_message_hash = get_monitor_balance_message(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, nonce)
-        balance_message_hash = get_monitor_balance_message(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789)
+        """without round number"""
+#        balance_message_hash = get_monitor_balance_message(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789)
+        """with round number"""
+        balance_message_hash = get_state_hash(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789)
+        self.log.info('(\n\treceiver %s, \n\topen_block_number %s\n\tbalance %d\n\tcontract %s\n\tnonce %d)',
+            self.state.receiver,open_block_number,balance,self.channel_manager_contract.address,123456789)
+        debug_print(['balance message hash', balance_message_hash])
         #balance_message_hash = get_state_hash(self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789)
         #self.log.info('Server (state_hash %s, round_number %d)', balance_message_hash, round_number)
 
     
-        """customer sign balance proof"""
-        customer_sig = sign_monitor_balance_proof(self.private_key, self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789)
+        """customer sign balance proof no round number"""
+#        customer_sig = sign_monitor_balance_proof(self.private_key, self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789)
+        """customer sign balance proof with round number"""
+        customer_sig = sign_monitor_balance_proof2(self.private_key, self.state.receiver, open_block_number, balance, self.channel_manager_contract.address, 123456789, round_number)
 
-        #print('\nbalance sig')
-        #debug_print([sender, receiver, open_block_number, balance_message_hash, signature])
+        print('\nbalance sig')
+        debug_print([sender, receiver, open_block_number, balance_message_hash, signature, customer_sig])
         """old send monitor sig"""
         #self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, balance_message_hash, signature])
         """send monitor customer sig"""
-        self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, balance_message_hash, signature, encode_hex(customer_sig)])
-        #self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, round_number, balance_message_hash, signature])
+        #self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, balance_message_hash, signature, encode_hex(customer_sig)])
+        """send with round number"""
+        self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, balance_message_hash, round_number, signature, encode_hex(customer_sig)])
 
 #        self.monitor.send([NEW_BALANCE_SIG, receiver, sender, open_block_number, signature])
         self.log.debug('WAIT FOR MONITOR TO ACCEPT BALANCE SIG') 
@@ -820,7 +900,7 @@ class ChannelManager(gevent.Greenlet):
         )
 
         if type(recv) == list and recv[0] == MONITOR_RECEIPT:
-            _customer,_sender,_open_block_number,_image,_t_start,_t_expire,_balance_message_hash = recv[1]
+            _customer,_sender,_open_block_number,_image,_t_start,_t_expire,_round_number,_balance_message_hash = recv[1]
             #_customer,_sender,_open_block_number,_image,_t_start,_t_expire,_round_number,_balance_message_hash = recv[1]
             self.log.info('Receipt (balance message hash %s)', encode_hex(_balance_message_hash))
             #self.log.info('Receipt (round number %s, balance message hash %s, state hash %s)', _round_number, encode_hex(_balance_message_hash), encode_hex(balance_message_hash))
@@ -830,23 +910,24 @@ class ChannelManager(gevent.Greenlet):
             assert _open_block_number == open_block_number
             assert _t_expire > _t_start
             assert _balance_message_hash == balance_message_hash
+            assert _round_number == round_number
 
             signed_receipt_msg = recv[2]
       
 #            m = MonitorReceipt(_t_start, _t_expire, _image, _balance_message_hash, signed_receipt_msg, nonce)
-            m = MonitorReceipt(_t_start, _t_expire, _image, _balance_message_hash, signed_receipt_msg, 123456789)
+            m = MonitorReceipt(_t_start, _t_expire, _image, _balance_message_hash, signed_receipt_msg, 123456789, _round_number)
 
 #            self.signed_receipts[sender, open_block_number] = m 
             self.not_yet_valid[sender, open_block_number] = m
             
-            sig_addr = verify_receipt(
+            sig_addr = verify_receipt2(
                 _customer,
                 _sender,
                 _open_block_number,
                 _image,
                 _t_start,
                 _t_expire,
-#                round_number,
+                round_number,
                 _balance_message_hash,
                 signed_receipt_msg
             )
@@ -883,6 +964,19 @@ class ChannelManager(gevent.Greenlet):
                 m.pre_image = pre_image
                 self.signed_receipts[sender,open_block_number] = m
                 del self.not_yet_valid[sender,open_block_number]
+
+                raw_tx = create_signed_contract_transaction(
+                    self.private_key,
+                    self.channel_monitor_contract,
+                    'register_preimage',
+                    [
+                        pre_image,
+                        _image
+                    ]
+                )
+                
+                txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx);
+                self.log.info('Registering pre-image (image %s, pre_image %d, txid %s)', _image, pre_image, txid);
             else:
                 self.log.info('MONITOR didnt reveal the pre-image, trigger dispute')
 
@@ -911,7 +1005,8 @@ class ChannelManager(gevent.Greenlet):
         self.log.info('FINISHED THE COND PAYMENT FUNCTION')
 
 
-    def register_payment(self, sender: str, open_block_number: int, balance: int, signature: str):
+    #def register_payment(self, sender: str, open_block_number: int, balance: int, signature: str):
+    def register_payment(self, sender: str, open_block_number: int, balance: int, signature: str, _round = None):
         """Register a payment.
         Method will try to reconstruct (verify) balance update data
         with a signature sent by the client.
@@ -924,17 +1019,19 @@ class ChannelManager(gevent.Greenlet):
             signature(str):             balance proof to verify
         """
         assert is_checksum_address(sender)
-        c = self.verify_balance_proof(sender, open_block_number, balance, signature)
+        c = self.verify_balance_proof(sender, open_block_number, balance, signature, _round=_round)
+        debug_print(['\nREGISTER PAYMENT', self.receiver, open_block_number, balance, signature, self.channel_manager_contract.address, c.next_nonce, c.round_number+1])
         if balance <= c.balance:
             self.log.info('actually balances are not right')
             raise InvalidBalanceAmount('The balance must not decrease.')
         if balance > c.deposit:
             self.log.info('balance is more than deposit?')
             raise InvalidBalanceProof('Balance must not be greater than deposit')
+        assert _round == c.round_number + 1
         c.last_nonce = c.nonce
         c.nonce = c.next_nonce
         c.next_nonce = c.rng.getrandbits(256)
-#        c.round_number += 1
+        c.round_number += 1
 #        print(bcolors.OKGREEN + 'round number is now %d' % c.round_number + bcolors.ENDC)
 #        self.log.info('Channel (%s, %d) \n\tlast nonce %s \n\tnonce %s \n\tnext nonce %s',
 #            sender, open_block_number,
@@ -948,7 +1045,7 @@ class ChannelManager(gevent.Greenlet):
         c.last_signature = signature
         c.mtime = time.time()
 #        self.previous_channel_sigs[signature] = (sender, open_block_number, balance, c.nonce)
-        self.previous_channel_sigs[signature] = (sender, open_block_number, balance, 123456789)
+        self.previous_channel_sigs[signature] = (sender, open_block_number, balance, 123456789, c.round_number)
 
         self.state.set_channel(c)
         self.log.debug('registered payment \n\t(sender %s, \n\tblock number %s, \n\tnew balance %s)',
@@ -1082,15 +1179,16 @@ class ChannelManager(gevent.Greenlet):
             #print('\n\n%s\n\n', self.previous_channel_sigs)
             return
 
-        _sender, _open_block_number, _balance, _nonce = self.previous_channel_sigs[encode_hex(balance_sig)]
+        _sender, _open_block_number, _balance, _nonce,_round_number = self.previous_channel_sigs[encode_hex(balance_sig)]
 
-        sig_addr = verify_monitor_balance_proof(
+        sig_addr = verify_monitor_balance_proof2(
             self.receiver,
             open_block_number,
             channel.balance,
             balance_sig,
             self.channel_manager_contract.address,
-            123456789
+            123456789,
+            _round_number
 #            _nonce
         )
 
@@ -1150,7 +1248,15 @@ class ChannelManager(gevent.Greenlet):
 
         assert encode_hex(balance_sig) in self.previous_channel_sigs
 
-        _sender,_open_block_number,_balance,_nonce = self.previous_channel_sigs[encode_hex(balance_sig)]
+        _sender,_open_block_number,_balance,_nonce,_round_number = self.previous_channel_sigs[encode_hex(balance_sig)]
+        self.log.info('channel sig received \n\treceiver %s\n\tblock %d\n\tbalance %s\n\tcontract %s\n\tnonce %d\n\tsig %s',
+            self.state.receiver,_open_block_number,_balance,self.channel_manager_contract.address,_nonce,balance_sig)
+
+
+        state_hash = get_state_hash(self.state.receiver, _open_block_number, _balance, self.channel_manager_contract.address, _nonce)
+    
+        self.log.info('State hash expected: %s, hex %s', state_hash, encode_hex(state_hash))
+
         r = self.signed_receipts[sender, open_block_number]
 
 #        if r.balance_message_hash == balance_msg:
@@ -1183,11 +1289,12 @@ class ChannelManager(gevent.Greenlet):
 #            )
 #        )
 
+
         raw_tx = create_signed_contract_transaction(
             self.private_key,
             self.channel_manager_contract,
             'revealMonitorEvidence',
-            args=[sender, self.receiver, open_block_number, _balance],
+            args=[sender, self.receiver, open_block_number, _balance, _nonce, _round_number],
         )
 
         txid = self.blockchain.web3.eth.sendRawTransaction(raw_tx)

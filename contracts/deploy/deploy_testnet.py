@@ -114,7 +114,7 @@ def main(**kwargs):
             pythonic_middleware.__closure__[2].cell_contents['eth_getBlockByHash'].args[1].args[0]['extraData'] = to_hexbytes(size_extraData_for_poa, variable_length=True)
         # end
 
-        owner = owner or web3.eth.accounts[0]
+        owner = web3.eth.accounts[0]
         assert owner and is_address(owner), 'Invalid owner provided.'
         owner = to_checksum_address(owner)
         print('Owner is', owner)
@@ -166,7 +166,7 @@ def main(**kwargs):
                 delta_withdraw,
                 delta_settle
             ],
-            transaction={'from': owner, 'value': 1}
+            transaction={'from': owner, 'value': 10000}
         )
         receipt = check_succesful_tx(chain.web3, txhash, txn_wait)
         guardian_address = receipt['contractAddress']

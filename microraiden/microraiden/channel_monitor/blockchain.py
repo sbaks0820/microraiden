@@ -11,7 +11,7 @@ from eth_utils import is_same_address, to_checksum_address
 
 from microraiden.config import NETWORK_CFG
 from microraiden.constants import PROXY_BALANCE_LIMIT
-from microraiden.utils import get_logs
+from microraiden.utils import get_logs, bcolors
 
 
 class Blockchain(gevent.Greenlet):
@@ -83,6 +83,7 @@ class Blockchain(gevent.Greenlet):
 
 
     def _update(self):
+        #print(bcolors.BOLD + 'monitor: block number %d' % (self.web3.eth.blockNumber) + bcolors.ENDC)
         current_block = self.web3.eth.blockNumber
         # reset unconfirmed channels in case of reorg
         if self.wait_sync_event.is_set():  # but not on first sync

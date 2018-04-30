@@ -99,7 +99,8 @@ class MonitorJob(object):
         open_block_number: int,
         last_signature = None,
         last_hash = None,
-        last_customer_sig = None
+        last_customer_sig = None,
+        last_round_number = None
         #deposit: int,
     ):
         assert channel_manager
@@ -109,9 +110,11 @@ class MonitorJob(object):
         self.open_block_number = open_block_number
         self.last_signature = last_signature
         self.last_hash = last_hash
+        self.last_round_number = last_round_number
         self.all_signatures = []
         self.all_customer_signatures = []
         self.all_hashes = []
+        self.all_round_numbers = []
 
         self.interfered = False
         self.sent_receipt = False
@@ -288,18 +291,21 @@ class ChannelMonitor(gevent.Greenlet):
         assert job.last_hash == job.all_hashes[-1]
         assert job.last_signature == job.all_signatures[-1]
         assert job.last_customer_sig == job.all_customer_signatures[-1]
+        assert job.last_round_number == job.all_round_numbers[-1]
 
         if self.try_to_make_some_money and len(job.all_hashes) > 1:
             evidence_hash = job.all_hashes[-2]
             evidence_sig = job.all_signatures[-2]
             evidence_customer_sig = job.all_customer_signatures[-2]
+            evidence_round_number = job.all_round_numbers[-2]
         else:
             evidence_hash = job.last_hash
             evidence_sig = job.last_signature
             evidence_customer_sig = job.last_customer_sig
+            evidence_round_number = job.last_round_number
         
-        #print('\nevidence')
-        #debug_print([evidence_hash, decode_hex(evidence_sig), evidence_sig])
+        print('\nevidence')
+        debug_print([evidence_hash, decode_hex(evidence_sig), decode_hex(evidence_customer_sig), evidence_round_number])
 
 
         raw_tx = create_signed_contract_transaction(
@@ -311,7 +317,8 @@ class ChannelMonitor(gevent.Greenlet):
                 open_block_number,
                 evidence_hash,
                 decode_hex(evidence_sig),
-                decode_hex(evidence_customer_sig)
+                decode_hex(evidence_customer_sig),
+                evidence_round_number
             ]
         )
 
@@ -363,7 +370,7 @@ class ChannelMonitor(gevent.Greenlet):
     """
     create a RECEIPT for the customer
     """
-    def create_signed_receipt(self, customer: str, sender: str, open_block_number: int, balance_message_hash: bytes, signature: str):
+    def create_signed_receipt(self, customer: str, sender: str, open_block_number: int, balance_message_hash: bytes, signature: str, round_number: int):
     #def create_signed_receipt(self, customer: str, sender: str, open_block_number: int, balance_message_hash: bytes, round_number: int, signature: str):
 
         customer = to_checksum_address(customer)
@@ -383,7 +390,7 @@ class ChannelMonitor(gevent.Greenlet):
         t_start = curr_block
         t_expire = t_start + self.delta_receipt
 
-        receipt_msg = sign_receipt(#2(
+        receipt_msg = sign_receipt2(
                 self.private_key,
                 customer,
                 sender,
@@ -391,7 +398,7 @@ class ChannelMonitor(gevent.Greenlet):
                 image,
                 t_start,
                 t_expire,
-                #round_number,
+                round_number,
                 balance_message_hash
         )
        
@@ -408,8 +415,8 @@ class ChannelMonitor(gevent.Greenlet):
                 bcolors.ENDC
         )
 
-        return [MONITOR_RECEIPT, (customer,sender,open_block_number,image,t_start,t_expire,balance_message_hash), receipt_msg] 
-        #return [MONITOR_RECEIPT, (customer,sender,open_block_number,image,t_start,t_expire,round_number,balance_message_hash), receipt_msg] 
+        #return [MONITOR_RECEIPT, (customer,sender,open_block_number,image,t_start,t_expire,balance_message_hash), receipt_msg] 
+        return [MONITOR_RECEIPT, (customer,sender,open_block_number,image,t_start,t_expire,round_number,balance_message_hash), receipt_msg] 
 
     """
     received a new BLANCE SIG from customer
@@ -417,7 +424,9 @@ class ChannelMonitor(gevent.Greenlet):
     """old function"""
 #    def on_new_balance_sig(self, command: str, customer: str,sender: str, open_block_number: int, balance_message_hash: bytes, signature: str):
     """accepted customer sig"""
-    def on_new_balance_sig(self, command: str, customer: str,sender: str, open_block_number: int, balance_message_hash: bytes, signature: str, customer_sig: str):
+    #def on_new_balance_sig(self, command: str, customer: str,sender: str, open_block_number: int, balance_message_hash: bytes, signature: str, customer_sig: str):
+    """with round number"""
+    def on_new_balance_sig(self, command: str, customer: str,sender: str, open_block_number: int, balance_message_hash: bytes, round_number: int, signature: str, customer_sig: str):
         #print('\nbalance sig')
         #debug_print([customer, sender, open_block_number, balance_message_hash, signature])
         customer = to_checksum_address(customer)
@@ -426,18 +435,25 @@ class ChannelMonitor(gevent.Greenlet):
         if not self.verify_customer_deposit(customer):
             return NO_CONTRACT_DEPOSIT 
 
+        current_round_number = self.jobs[customer,sender,open_block_number].round_number
+        try:
+            assert self.jobs[customer,sender,open_block_number].round_number == round_number-1
+        except AssertionError:
+            print(bcolors.OKBLUE + 'gave incorrent monitor number (current %d, expected %d, received %d)' % (current_round_number, current_round_number + 1, round_number) + bcolors.ENDC)
+            return
         try:
             assert self.jobs[customer,sender,open_block_number].last_signature != signature
             self.log.info('Signature is different')
-#            self.log.info('Current round number %d, state hash round number %d', self.jobs[customer,sender,open_block_number].round_number, round_number)
-#            assert self.jobs[customer,sender,open_block_number].round_number == round_number-1
-#            final_hash = monitor_balance_message_from_state(balance_message_hash, round_number)
+            self.log.info('Current round number %d, state hash round number %d', self.jobs[customer,sender,open_block_number].round_number, round_number)
+            final_hash = monitor_balance_message_from_state(balance_message_hash, round_number)
             
-            self.log.info('Monitors hash: (balanace message hash %s)', encode_hex(balance_message_hash))
-            #self.log.info('Monitors hash: (round number %s, balanace message hash %s, final hash %s)', round_number, encode_hex(balance_message_hash), encode_hex(final_hash))
+            #self.log.info('Monitors hash: (balanace message hash %s)', encode_hex(balance_message_hash))
+            self.log.info('Monitors hash: (round number %s, balanace message hash %s, final hash %s)', round_number, encode_hex(balance_message_hash), encode_hex(final_hash))
 
-            sig_addr = addr_from_sig(decode_hex(signature), balance_message_hash)
-            #sig_addr = addr_from_sig(decode_hex(signature), final_hash)
+            """regular"""
+            #sig_addr = addr_from_sig(decode_hex(signature), balance_message_hash)
+            """with receipt"""
+            sig_addr = addr_from_sig(decode_hex(signature), final_hash)
             if not is_same_address(
                     sig_addr,
                     sender
@@ -445,7 +461,10 @@ class ChannelMonitor(gevent.Greenlet):
                 self.log.info('balance message not signed by correct sender')
                 return BALANCE_SIG_NOT_ACCEPTED 
 
-            customer_sig_addr = addr_from_sig(decode_hex(customer_sig), balance_message_hash)
+            """regular"""
+            #customer_sig_addr = addr_from_sig(decode_hex(customer_sig), balance_message_hash)
+            """with receipt"""
+            customer_sig_addr = addr_from_sig(decode_hex(customer_sig), final_hash)
             if not is_same_address(
                     customer_sig_addr,
                     customer
@@ -453,16 +472,20 @@ class ChannelMonitor(gevent.Greenlet):
                 self.log.info('customers balance sig is wrong. address: %s', customer_sig_addr)
                 return BALANCE_SIG_NOT_ACCEPTED
 
-            receipt = self.create_signed_receipt(customer, sender, open_block_number, balance_message_hash, signature)
+            self.jobs[customer,sender,open_block_number].round_number += 1
+
+            receipt = self.create_signed_receipt(customer, sender, open_block_number, balance_message_hash, signature, round_number)
             #receipt = self.create_signed_receipt(customer, sender, open_block_number, balance_message_hash, round_number, signature)
             #self.customer_fair_exchange(customer, sender, open_block_number, balance_message_hash, signature)
             self.jobs[customer,sender,open_block_number].last_signature = signature
             self.jobs[customer,sender,open_block_number].last_hash = balance_message_hash
             self.jobs[customer,sender,open_block_number].last_customer_sig = customer_sig
+            self.jobs[customer,sender,open_block_number].last_round_number = round_number
 
             self.jobs[customer,sender,open_block_number].all_signatures.append(signature)
             self.jobs[customer,sender,open_block_number].all_customer_signatures.append(customer_sig)
             self.jobs[customer,sender,open_block_number].all_hashes.append(balance_message_hash)
+            self.jobs[customer,sender,open_block_number].all_round_numbers.append(round_number)
 
 
             self.log.info('Accepting new balance signature (customer %s, sender %s, open block number %d)', customer, sender, open_block_number)
@@ -645,7 +668,9 @@ class MonitorListener(gevent.Greenlet):
         self.channel_monitor.start()
         self.channel_monitor.wait_sync()
         self.log = logging.getLogger('channel_monitor')
-        
+       
+        self.log.info('Starting listener...')
+
         self.listener = Listener((address,port))
         self.conn = None
 
@@ -672,7 +697,9 @@ class MonitorListener(gevent.Greenlet):
                 break
 
     def run(self):
+        print(bcolors.BOLD + 'MONITOR: running run' + bcolors.ENDC)
         assert (not self.conn)
+        print(bcolors.BOLD + "monitor: opening listner (address %s, port %d)" % (self.address, self.port) + bcolors.ENDC)
         conn = self.listener.accept()
         recv = conn.recv()
         try:

@@ -29,6 +29,10 @@ class RequestData:
         self.sender_address = headers.get(header.SENDER_ADDRESS, None)
         self.payment = headers.get(header.PAYMENT, None)
         self.balance_signature = headers.get(header.BALANCE_SIGNATURE, None)
+        round_number = self.round_number = headers.get(header.ROUND_NUMBER, None)
+        if round_number:
+            round_number = int(round_number)
+        self.round_number = round_number
         open_block_number = headers.get(header.OPEN_BLOCK, None)
         if open_block_number:
             open_block_number = int(open_block_number)

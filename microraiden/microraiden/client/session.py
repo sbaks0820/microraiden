@@ -12,6 +12,7 @@ from microraiden.header import HTTPHeaders
 from microraiden.client import Client, Channel
 from microraiden.utils import verify_balance_proof, verify_monitor_balance_proof, bcolors
 
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 log = logging.getLogger(__name__)
 
 class Session(requests.Session):
@@ -121,6 +122,7 @@ class Session(requests.Session):
             headers.sender_address = self.channel.sender
             headers.receiver_address = self.channel.receiver
             headers.open_block = str(self.channel.block)
+            headers.round_number = str(self.channel.last_round_signed)
 
         headers = HTTPHeaders.serialize(headers)
         if 'headers' in kwargs:
@@ -289,7 +291,7 @@ class Session(requests.Session):
             log.error("No channel could be created or sufficiently topped up.")
             return False
 
-        print(bcolors.BOLD + " createing transfer of amount {}".format(price) + bcolors.ENDC)
+        print(bcolors.BOLD + " createing transfer of amount {} round number {}".format(price, self.channel.round_number + 1) + bcolors.ENDC)
         balance_sig = self.channel.create_transfer(price)
         log.debug(
             'Sending new balance proof. New channel balance: {}/{}'
@@ -311,11 +313,11 @@ class Session(requests.Session):
         pass
 
     def on_success(self, method: str, url: str, response: Response, **kwargs) -> bool:
-        log.debug('Resource received.')
+        log.info('Resource received.')
         self.channel.last_nonce = self.channel.nonce
         self.channel.nonce = self.channel.next_nonce
         self.channel.next_nonce = self.channel.rng.getrandbits(256)
-        #self.channel.round_number += 1
+        self.channel.round_number += 1
         print(bcolors.BOLD + 'round number is now %d' % self.channel.round_number + bcolors.ENDC)
 
         log.debug('last nonce {} \n\t nonce {} \n\t next nonce {}'.format(self.channel.last_nonce, self.channel.nonce, self.channel.next_nonce))

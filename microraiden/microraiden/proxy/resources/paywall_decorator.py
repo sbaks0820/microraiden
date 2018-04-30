@@ -1,4 +1,4 @@
-import logging
+import logging, sys
 from flask import Response, make_response, request
 from microraiden import HTTPHeaders as header
 from flask_restful.utils import unpack
@@ -19,6 +19,9 @@ from microraiden.proxy.resources.request_data import RequestData
 from functools import wraps
 from eth_utils import is_address
 
+from microraiden.utils import bcolors
+
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 log = logging.getLogger(__name__)
 
 
@@ -96,38 +99,43 @@ class Paywall(object):
 
         # try to get an existing channel
         try:
+            print(bcolors.BOLD + 'Doing verify check in paywall' + bcolors.ENDC)
             channel = self.channel_manager.verify_balance_proof(
                 data.sender_address, data.open_block_number,
-                data.balance, data.balance_signature)
+                data.balance, data.balance_signature,
+                default_check=True, _round=data.round_number)
         except InsufficientConfirmations as e:
-            log.debug('Refused payment: Insufficient confirmations (sender=%s, block=%d)' %
+            log.info('Refused payment: Insufficient confirmations (sender=%s, block=%d)' %
                       (data.sender_address, data.open_block_number))
             headers.update({header.INSUF_CONFS: "1"})
             return True, headers
         except NoOpenChannel as e:
-            log.debug('Refused payment: Channel does not exist (sender=%s, block=%d)' %
+            log.info('Refused payment: Channel does not exist (sender=%s, block=%d)' %
                       (data.sender_address, data.open_block_number))
             headers.update({header.NONEXISTING_CHANNEL: "1"})
             return True, headers
         except InvalidBalanceAmount as e:
-            log.debug('Refused payment: Invalid balance amount: %s (sender=%s, block=%d)' %
+            log.info('Refused payment: Invalid balance amount: %s (sender=%s, block=%d)' %
                       (str(e), data.sender_address, data.open_block_number))
             headers.update({header.INVALID_PROOF: 1})
             return True, headers
         except InvalidBalanceProof as e:
-            log.debug('Refused payment: Invalid balance proof: %s (sender=%s, block=%d)' %
+            log.info('Refused payment: Invalid balance proof: %s (sender=%s, block=%d)' %
                       (str(e), data.sender_address, data.open_block_number))
             headers.update({header.INVALID_PROOF: 1})
             return True, headers
         except NoMonitorDeposit as e:
-            log.debug('Refused payment: Monitor deposit not placed: %s (sender=%s, block=%d)' %
+            log.info('Refused payment: Monitor deposit not placed: %s (sender=%s, block=%d)' %
                     (str(e), data.sender_address, data.open_block_number))
             headers.update({header.NO_MONITOR_DEPOSIT: 1})
             return True, headers
         except UnconfirmedMonitorDeposit as e:
-            log.debug('Refused payment: Monitor deposit not confirmed: %s (sender=%s, block=%d)' %
+            log.info('Refused payment: Monitor deposit not confirmed: %s (sender=%s, block=%d)' %
                     (str(e), data.sender_address, data.open_block_number))
             headers.update({header.DEPOSIT_UNCONFIRMED: 1})
+            return True, headers
+        except AssertionError as e:
+            log.info('the round nuber andbalance are weirdiung out, ask again')
             return True, headers
 
         # set headers to reflect channel state
@@ -154,7 +162,8 @@ class Paywall(object):
                 channel.sender,
                 data.open_block_number,
                 data.balance,
-                data.balance_signature)
+                data.balance_signature,
+                _round=data.round_number)
         except (InvalidBalanceAmount, InvalidBalanceProof):
             # balance sent to the proxy is less than in the previous proof
             return True, headers

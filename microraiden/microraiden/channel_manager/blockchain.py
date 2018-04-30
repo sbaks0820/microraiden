@@ -84,6 +84,7 @@ class Blockchain(gevent.Greenlet):
 
 
     def _update(self):
+        #print(bcolors.BOLD + 'manager: block number %d' % (self.web3.eth.blockNumber) + bcolors.ENDC)
         current_block = self.web3.eth.blockNumber
         # reset unconfirmed channels in case of reorg
         if self.wait_sync_event.is_set():  # but not on first sync
@@ -307,10 +308,9 @@ class Blockchain(gevent.Greenlet):
             sender = to_checksum_address(sender)
             open_block_number = log['args']['open_block_number']
             if (sender, open_block_number) not in self.cm.channels:
-                self.log.debug("monitor interfered in channel that wasn't outsourced (sender %s open_block_number %s, balance_msg_sig %s)", 
+                self.log.debug("monitor interfered in channel that wasn't outsourced (sender %s open_block_number %s)", 
                     sender,
-                    open_block_number,
-                    balance_msg_sig)
+                    open_block_number)
             
             self.cm.event_monitor_interference(sender, open_block_number)
 
@@ -349,12 +349,12 @@ class Blockchain(gevent.Greenlet):
         for log in logs:
 #            monitor_balance = log['args']['_monitor_balance']
 #            closing_balance = log['args']['_closing_balance']
-            evidence = log['args']['_evidence']
+            round_number = int(log['args']['_round_number'])
             receipt_hash = log['args']['_receipt_hash']
             cheated = log['args']['_cheated']
 
-            self.log.info('RECOURSE RESULT: detected unconfirmed recourse result (evidence %s, receipt hash %s), did he cheat? %r',
-                evidence,
+            self.log.info('RECOURSE RESULT: detected unconfirmed recourse result (round_number %d, receipt hash %s), did he cheat? %r',
+                round_number,
                 receipt_hash,
                 cheated
             )
@@ -365,11 +365,18 @@ class Blockchain(gevent.Greenlet):
                     bcolors.ENDC
             )
 
-            print(bcolors.OKGREEN +
-                    '\n\tServer balance: %d' % int(self.web3.eth.getBalance(self.cm.receiver))
-            )
-               
+        logs = get_logs(
+            self.channel_manager_contract,
+            'ExtractHash',
+            **filters_unconfirmed
+        )
 
+        for log in logs:
+            message_hash = log['args']['message_hash']
+            state_hash = log['args']['state_hash']
+            signer = to_checksum_address(log['args']['signer'])
+
+            self.log.info('\n\tmessage_hash %s\n\tstate_hash %s\n\tsigner %s', message_hash, state_hash, signer)
 
         logs = get_logs(
             self.channel_monitor_contract,
@@ -459,6 +466,19 @@ class Blockchain(gevent.Greenlet):
             signer = to_checksum_address(log['args']['_sender'])
             self.log.info('Signer of customer evidence: %s', signer)
 
+        logs = get_logs(
+            self.channel_manager_contract,
+            'RevealHash',
+            **filters_unconfirmed
+        )
+
+        for log in logs:
+            evidence = encode_hex(log['args']['_evidence'])
+            resolved = encode_hex(log['args']['_resolved'])
+            balance = int(log['args']['_balance'])
+            self.log.info(bcolors.BOLD + "Reveal (balance %s, evidence %s, resolved %s)" + bcolors.ENDC, balance, evidence, resolved)
+
+
         # See which close requests are ready to be responded to
         # and process them normally.
         disputed = []
@@ -469,7 +489,7 @@ class Blockchain(gevent.Greenlet):
                     sender,open_block_number = self.wait_to_dispute[mtimeout][0], self.wait_to_dispute[mtimeout][1]
                     self.log.info('Processing close request at block %s, mtimeout %s',
                         self.cm.state.confirmed_head_number, mtimeout)
-#                    self.cm.reveal_monitor_submission(*self.wait_to_dispute[mtimeout])
+                    self.cm.reveal_monitor_submission(*self.wait_to_dispute[mtimeout])
                     self.cm.event_channel_close_requested(*self.wait_to_dispute[mtimeout])
                 except InsufficientBalance:
                     self.log.fatal('Insufficient ETH balance of the receiver. '

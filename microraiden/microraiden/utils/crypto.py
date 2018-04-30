@@ -114,6 +114,7 @@ def sign_transaction(tx: Transaction, privkey: str, network_id: int):
     # Implementing EIP 155.
     tx.v = network_id
     sig = sign(privkey, keccak256(rlp.encode(tx)), v=35 + 2 * network_id)
+#    sig = sign(privkey, keccak256(rlp.encode(tx)), v=35)
     v, r, s = sig[-1], sig[0:32], sig[32:-1]
     tx.v = v
     tx.r = int.from_bytes(r, byteorder='big')
@@ -179,11 +180,12 @@ def eth_sign_typed_data_message3(typed_data: List[TypedData]) -> bytes:
     typed_data = [('{} {}'.format(type_, name), data) for type_, name, data in typed_data]
     schema, data = [list(zipped) for zipped in zip(*typed_data)]
 
-    return pack(keccak256(*schema), keccak256(*data))
+    return keccak256(keccak256(*schema), keccak256(*data))
+#    return pack(keccak256(*schema), keccak256(*data))
 
 ## ROUND NUMBER #####################################################
 def monitor_balance_message_from_state(state_hash: bytes, round_number: int) -> bytes:
-    return keccak256(state_hash, round_number)
+    return keccak256(state_hash, (round_number, 32))
 
 def get_state_hash(
         receiver: str, open_block_number: int, balance: int, contract_address: str, nonce: int) -> bytes:
@@ -280,7 +282,7 @@ def get_receipt_message2(
         ('uint32', 'start time', (t_start, 32)),
         ('uint32', 'expire time', (t_expire, 32)),
         ('bytes32', 'image', image),
-        ('uint32', 'round_number', round_number),
+        ('uint32', 'round_number', (round_number, 32)),
         ('bytes32', 'evidence', balance_message_hash)
     ])
 

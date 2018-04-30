@@ -73,6 +73,12 @@ contract RaidenMicroTransferChannels {
 
         // Revealed balance from evidence
         uint192 monitor_balance;
+
+        // Latest round submitted by a monitor
+        uint32 best_round;
+
+        // Did someone reveal the state
+        bool revealed;
     }
 
     /*
@@ -305,7 +311,8 @@ contract RaidenMicroTransferChannels {
         uint32 _open_block_number,
         uint192 _balance,
         bytes _balance_msg_sig,
-        uint32 nonce)
+        uint32 nonce,
+        uint32 _round_number)
         external
     {
         require(_balance > 0);
@@ -316,7 +323,8 @@ contract RaidenMicroTransferChannels {
             _open_block_number,
             _balance,
             _balance_msg_sig,
-            nonce
+            nonce,
+            _round_number
         );
 
         bytes32 key = getKey(sender_address, msg.sender, _open_block_number);
@@ -353,7 +361,8 @@ contract RaidenMicroTransferChannels {
         uint192 _balance,
         bytes _balance_msg_sig,
         bytes _closing_sig,
-        uint32 nonce)
+        uint32 nonce,
+        uint32 _round_number)
         external
     {
         // Derive sender address from signed balance proof
@@ -362,8 +371,12 @@ contract RaidenMicroTransferChannels {
             _open_block_number,
             _balance,
             _balance_msg_sig,
-            nonce
+            nonce,
+            _round_number
         );
+
+        bytes32 key = getKey(sender, _receiver_address, _open_block_number);
+        require(closing_requests[key].best_round <= _round_number);
 
         // Derive receiver address from closing signature
         address receiver = extractClosingSignature(
@@ -387,24 +400,27 @@ contract RaidenMicroTransferChannels {
         uint32 open_block_number,
         bytes32 balance_msg_hash,
         bytes balance_msg_sig,
-        bytes receiver_msg_sig)
+        bytes receiver_msg_sig,
+        uint32 _round_number)
         external
         view
     {
         //DebugInputs(balance_msg_hash, balance_msg_sig);
-        address customer_signer = ECVerify.ecverify(balance_msg_hash, receiver_msg_sig);
+        address customer_signer = ECVerify.ecverify(keccak256(balance_msg_hash, _round_number), receiver_msg_sig);
         require(customer_signer == receiver);
 
-        address s = ECVerify.ecverify(balance_msg_hash, balance_msg_sig);
+        address s = ECVerify.ecverify(keccak256(balance_msg_hash, _round_number), balance_msg_sig);
 
         bytes32 key = getKey(s, receiver, open_block_number);
         
         require(channels[key].open_block_number > 0);
         require(closing_requests[key].settle_block_number > 0);
+        require(closing_requests[key].best_round < _round_number);
 
         closing_requests[key].evidence = balance_msg_hash;
         closing_requests[key].evidence_sig = balance_msg_sig;
-
+        closing_requests[key].best_round = _round_number;
+        
         MonitorInterference(s, open_block_number, balance_msg_sig);
     }
 
@@ -451,6 +467,8 @@ contract RaidenMicroTransferChannels {
 
         // Make sure the challenge_period has ended
 	    require(block.number > closing_requests[key].settle_block_number);
+        require(!(closing_requests[key].evidence != 0 && closing_requests[key].revealed == false));
+
 
         settleChannel(msg.sender, _receiver_address, _open_block_number,
             closing_requests[key].closing_balance
@@ -491,15 +509,19 @@ contract RaidenMicroTransferChannels {
         uint32 _open_block_number)
         external
         view
-//        returns (uint192, uint192, uint32)
-        returns (uint32, bytes32)
+        returns (uint32, uint32)
     {
         bytes32 key = getKey(_sender_address, _receiver_address, _open_block_number);
 
         return (
             closing_requests[key].settle_block_number,
-            closing_requests[key].evidence
+            closing_requests[key].best_round
         );
+
+//        return (
+//            closing_requests[key].settle_block_number,
+//            closing_requests[key].evidence
+//        );
 //            closing_requests[key].closing_balance,
 //            closing_requests[key].monitor_balance,
 //            closing_requests[key].settle_block_number
@@ -552,6 +574,8 @@ contract RaidenMicroTransferChannels {
             }
         }
     }
+  
+    event ExtractHash(bytes32 indexed message_hash, bytes32 indexed state_hash, address indexed signer);
 
     /// @notice Returns the sender address extracted from the balance proof.
     /// dev Works with eth_signTypedData https://github.com/ethereum/EIPs/pull/712.
@@ -566,7 +590,8 @@ contract RaidenMicroTransferChannels {
         uint32 _open_block_number,
         uint192 _balance,
         bytes _balance_msg_sig,
-        uint32 nonce)
+        uint32 nonce,
+        uint32 _round_number)
         public
         view
         returns (address)
@@ -577,7 +602,8 @@ contract RaidenMicroTransferChannels {
         // (variable names and types).
         // ! Note that EIP712 might change how hashing is done, triggering a
         // new contract deployment with updated code.
-        bytes32 message_hash = keccak256(
+       
+        bytes32 state_hash = keccak256(
             keccak256(
                 'string message_id',
                 'address receiver',
@@ -596,8 +622,32 @@ contract RaidenMicroTransferChannels {
             )
         );
 
+        bytes32 message_hash = keccak256(
+            state_hash,
+            _round_number
+        );
+//        bytes32 message_hash = keccak256(
+//            keccak256(keccak256(
+//                'string message_id',
+//                'address receiver',
+//                'uint32 block_created',
+//                'uint192 balance',
+//                'address contract',
+//                'uint32 nonce'
+//            ),
+//            keccak256(
+//                'Sender balance proof signature',
+//                _receiver_address,
+//                _open_block_number,
+//                _balance,
+//                address(this),
+//                nonce
+//            )
+//        ), _round_number);
+
         // Derive address from signature
         address signer = ECVerify.ecverify(message_hash, _balance_msg_sig);
+        ExtractHash(message_hash, state_hash, signer);
         return signer;
     }
 
@@ -766,38 +816,58 @@ contract RaidenMicroTransferChannels {
     //event RevealSigner(address _signer_address);
     //event RevealCorrectBalance();
     //event RevealIncorrectBalance();
-
+    event RevealHash(bytes32 indexed _resolved, bytes32 indexed _evidence, uint192 indexed _balance);
     function revealMonitorEvidence(
         address _sender_address,
         address _receiver_address,
         uint32 _open_block_number,
         uint192 _balance,
-        uint32 _nonce)
+        uint32 _nonce,
+        uint32 _round_number)
         external
     {
+        bytes32 key = getKey(_sender_address, _receiver_address, _open_block_number);
+        if (closing_requests[key].revealed) return;
 
-        bytes32 key = getKey(_sender_address, msg.sender, _open_block_number);
-      
-        address signer = extractBalanceProofSignature(
-            msg.sender,
-            _open_block_number,
-            _balance,
-            closing_requests[key].evidence_sig,
-            _nonce
+//        address signer = extractBalanceProofSignature(
+//            msg.sender,
+//            _open_block_number,
+//            _balance,
+//            closing_requests[key].evidence_sig,
+//            _nonce,
+//            _round_number
+//        );
+//
+//        require(signer == _sender_address);
+
+        bytes32 message_hash = keccak256(
+            keccak256(
+                'string message_id',
+                'address receiver',
+                'uint32 block_created',
+                'uint192 balance',
+                'address contract',
+                'uint32 nonce'
+            ),
+            keccak256(
+                'Sender balance proof signature',
+                _receiver_address,
+                _open_block_number,
+                _balance,
+                address(this),
+                _nonce
+            )
         );
 
-        require(signer == _sender_address);
+        require(message_hash == closing_requests[key].evidence); 
 
         closing_requests[key].monitor_balance = _balance;
-
-        //RevealSigner(signer);
-
-        //if (signer == _sender_address) {
-        //    closing_requests[key].monitor_balance = _balance;
-        //    RevealCorrectBalance();
-        //} else {
-        //    RevealIncorrectBalance();
-        //}
+        if (_balance > closing_requests[key].closing_balance) 
+            closing_requests[key].closing_balance = _balance;
+        
+        RevealHash(message_hash, closing_requests[key].evidence, _balance);         
+       
+        closing_requests[key].revealed = true;
     }
 
 
